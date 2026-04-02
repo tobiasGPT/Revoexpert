@@ -3,6 +3,18 @@ import subprocess, os, glob, json, uuid
 
 app = Flask(__name__)
 
+def env_path(name, default):
+    return os.path.expanduser(os.getenv(name, default))
+
+def env_int(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
 def trim_srt_segment(srt_path, start_s, end_s, out_path):
     """Trim an SRT file to [start_s, end_s] and write shifted timestamps."""
     def ts_to_s(ts):
@@ -57,13 +69,14 @@ def trim_srt_segment(srt_path, start_s, end_s, out_path):
         f.write('\n\n'.join(out_blocks) + '\n')
     return True
 
-CAPCUT_DIR = "/Users/tobiaslundgren/Movies/CapCut"
-EDITED_DIR = os.path.join(CAPCUT_DIR, "vivi_edited")
-REELS_DIR = os.path.join(CAPCUT_DIR, "reels")
-OVERLAY = os.path.join(CAPCUT_DIR, "viviandco_overlay.png")
-FFMPEG = "/opt/homebrew/Cellar/ffmpeg-full/8.1/bin/ffmpeg"
-FFPROBE = "/opt/homebrew/bin/ffprobe"
-YTDLP = "/opt/homebrew/bin/yt-dlp"
+CAPCUT_DIR = env_path("REVO_CAPCUT_DIR", "/Users/tobiaslundgren/Movies/CapCut")
+EDITED_DIR = env_path("REVO_EDITED_DIR", os.path.join(CAPCUT_DIR, "vivi_edited"))
+REELS_DIR = env_path("REVO_REELS_DIR", os.path.join(CAPCUT_DIR, "reels"))
+OVERLAY = env_path("REVO_OVERLAY_PATH", os.path.join(CAPCUT_DIR, "viviandco_overlay.png"))
+FFMPEG = env_path("REVO_FFMPEG_BIN", "/opt/homebrew/Cellar/ffmpeg-full/8.1/bin/ffmpeg")
+FFPROBE = env_path("REVO_FFPROBE_BIN", "/opt/homebrew/bin/ffprobe")
+YTDLP = env_path("REVO_YTDLP_BIN", "/opt/homebrew/bin/yt-dlp")
+PORT = env_int("REVO_PORT", 7777)
 
 VIDEO_PATTERNS = ("*.mov", "*.mp4", "*.MOV", "*.MP4")
 ALLOWED_MEDIA_ROOTS = (CAPCUT_DIR, EDITED_DIR, REELS_DIR)
@@ -111,6 +124,25 @@ def get_tool_status():
         "overlay": os.path.exists(OVERLAY),
     }
 
+def get_tool_versions():
+    commands = {
+        "ffmpeg": [FFMPEG, "-version"],
+        "ffprobe": [FFPROBE, "-version"],
+        "yt_dlp": [YTDLP, "--version"],
+    }
+    versions = {}
+    for key, command in commands.items():
+        if not os.path.exists(command[0]):
+            versions[key] = None
+            continue
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3)
+            first_line = (result.stdout or result.stderr or "").strip().splitlines()
+            versions[key] = first_line[0] if first_line else None
+        except Exception:
+            versions[key] = None
+    return versions
+
 def get_workspace_snapshot():
     tools = get_tool_status()
     source_files = list_videos(CAPCUT_DIR)
@@ -128,6 +160,11 @@ def get_workspace_snapshot():
             "edited": EDITED_DIR,
             "reels": REELS_DIR,
         },
+        "config": {
+            "overlay": OVERLAY,
+            "port": PORT,
+        },
+        "tool_versions": get_tool_versions(),
         "recent_outputs": {
             "edited": edited_files[:8],
             "reels": reel_files[:8],
@@ -875,6 +912,18 @@ def index():
 def status():
     return jsonify(get_workspace_snapshot())
 
+@app.route('/health')
+def health():
+    snapshot = get_workspace_snapshot()
+    return jsonify({
+        "ok": snapshot["ready"],
+        "port": PORT,
+        "tools": snapshot["tools"],
+        "tool_versions": snapshot["tool_versions"],
+        "directories": snapshot["directories"],
+        "overlay": snapshot["config"]["overlay"],
+    }), (200 if snapshot["ready"] else 503)
+
 @app.route('/outputs')
 def outputs():
     return jsonify(get_workspace_snapshot()["recent_outputs"])
@@ -1248,4 +1297,4 @@ def yt_reels():
     return jsonify({'ok':False,'error': last_error or 'No reels were created'})
 
 if __name__ == '__main__':
-    app.run(port=7777, debug=False)
+    app.run(host='127.0.0.1', port=PORT, debug=False)
