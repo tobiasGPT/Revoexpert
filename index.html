@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEXUS // Live Crypto</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;800&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0a0a0f;
+            --panel: #111118;
+            --accent: #00f0ff;
+            --accent-dim: #00f0ff40;
+            --alert: #ff2a6d;
+            --success: #00ff88;
+            --text: #e0e0e8;
+            --text-dim: #606070;
+            --btc: #f7931a;
+            --eth: #627eea;
+            --sol: #14f195;
+            --connected: #00ff88;
+            --disconnected: #ff2a6d;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .grid-bg {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-image:
+                linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none; z-index: 0;
+        }
+
+        .grid-bg::before {
+            content: ''; position: absolute; inset: 0;
+            background: radial-gradient(ellipse at center, transparent 0%, var(--bg) 100%);
+        }
+
+        header {
+            position: relative; z-index: 10; padding: 2rem;
+            border-bottom: 1px solid rgba(0, 240, 255, 0.1);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem; font-weight: 800; letter-spacing: 0.2em; position: relative;
+        }
+
+        .logo::after {
+            content: 'NEXUS'; position: absolute; left: 2px; top: 2px;
+            color: var(--accent); opacity: 0.3; animation: glitch 3s infinite;
+        }
+
+        @keyframes glitch {
+            0%, 90%, 100% { transform: translate(0); opacity: 0.3; }
+            92% { transform: translate(-2px, 2px); opacity: 0.5; }
+            94% { transform: translate(2px, -2px); opacity: 0.5; }
+            96% { transform: translate(-1px, 1px); opacity: 0.3; }
+        }
+
+        .status-bar { display: flex; gap: 2rem; font-size: 0.75rem; color: var(--text-dim); }
+        .status-item { display: flex; align-items: center; gap: 0.5rem; }
+
+        .pulse {
+            width: 8px; height: 8px; border-radius: 50%;
+            animation: pulse 1s ease-in-out infinite;
+        }
+        .pulse.connected { background: var(--connected); }
+        .pulse.disconnected { background: var(--disconnected); animation: none; }
+        .pulse.connecting { background: #ffaa00; animation: pulse 0.5s ease-in-out infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        main {
+            position: relative; z-index: 10; padding: 2rem;
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem; max-width: 1600px; margin: 0 auto;
+        }
+
+        .card {
+            background: var(--panel); border: 1px solid rgba(0, 240, 255, 0.1);
+            border-radius: 8px; padding: 1.5rem; position: relative;
+            overflow: hidden; transition: all 0.3s ease;
+        }
+
+        .card::before {
+            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            opacity: 0; transition: opacity 0.3s;
+        }
+
+        .card:hover::before { opacity: 1; }
+        .card:hover {
+            border-color: var(--accent-dim); transform: translateY(-2px);
+            box-shadow: 0 10px 40px rgba(0, 240, 255, 0.1);
+        }
+        .card.btc:hover { box-shadow: 0 10px 40px rgba(247, 147, 26, 0.15); }
+        .card.eth:hover { box-shadow: 0 10px 40px rgba(98, 126, 234, 0.15); }
+        .card.sol:hover { box-shadow: 0 10px 40px rgba(20, 241, 149, 0.15); }
+
+        .card-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 1rem; font-size: 0.75rem; text-transform: uppercase;
+            letter-spacing: 0.1em; color: var(--text-dim);
+        }
+
+        .card-value {
+            font-size: 2.5rem; font-weight: 800; line-height: 1;
+            margin-bottom: 0.5rem; transition: color 0.2s;
+        }
+        .card-value.btc { color: var(--btc); }
+        .card-value.eth { color: var(--eth); }
+        .card-value.sol { color: var(--sol); }
+        .card-value.market { color: var(--accent); }
+        .card-value.fear { color: var(--alert); }
+        .card-value.up { text-shadow: 0 0 20px var(--success); }
+        .card-value.down { text-shadow: 0 0 20px var(--alert); }
+
+        .card-sub { font-size: 0.8rem; color: var(--text-dim); }
+
+        .trend { color: var(--success); font-size: 0.8rem; transition: all 0.2s; }
+        .trend.down { color: var(--alert); }
+        .trend.flash { animation: flash 0.3s ease; }
+
+        @keyframes flash {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; transform: scale(1.2); }
+        }
+
+        .coin-icon { font-size: 1rem; margin-right: 0.3rem; }
+
+        .chart-container { grid-column: span 2; min-height: 350px; }
+
+        canvas { width: 100%; height: 220px; margin-top: 1rem; }
+
+        .terminal { grid-column: span 1; min-height: 350px; font-size: 0.8rem; }
+
+        .terminal-output {
+            height: 250px; overflow-y: auto; margin-top: 1rem; padding: 0.5rem;
+            background: rgba(0, 0, 0, 0.3); border-radius: 4px;
+        }
+
+        .terminal-line { margin-bottom: 0.5rem; opacity: 0.8; }
+        .terminal-line.new { animation: fadeIn 0.3s ease; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(-10px); }
+            to { opacity: 0.8; transform: translateX(0); }
+        }
+
+        .timestamp { color: var(--text-dim); margin-right: 0.5rem; }
+        .cmd { color: var(--accent); }
+        .warning { color: var(--alert); }
+        .success { color: var(--success); }
+        .btc-text { color: var(--btc); }
+        .eth-text { color: var(--eth); }
+        .sol-text { color: var(--sol); }
+
+        .orb {
+            position: fixed; width: 300px; height: 300px; border-radius: 50%;
+            background: radial-gradient(circle, var(--accent-dim) 0%, transparent 70%);
+            pointer-events: none; z-index: 5; opacity: 0.3;
+            animation: float 20s ease-in-out infinite;
+        }
+        .orb:nth-child(1) { top: 10%; left: 10%; animation-delay: 0s; }
+        .orb:nth-child(2) {
+            top: 60%; right: 10%; animation-delay: -5s;
+            background: radial-gradient(circle, rgba(247, 147, 26, 0.15) 0%, transparent 70%);
+        }
+        .orb:nth-child(3) {
+            bottom: 10%; left: 40%; animation-delay: -10s; width: 200px; height: 200px;
+            background: radial-gradient(circle, rgba(98, 126, 234, 0.15) 0%, transparent 70%);
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            25% { transform: translate(30px, -30px) scale(1.1); }
+            50% { transform: translate(-20px, 20px) scale(0.9); }
+            75% { transform: translate(20px, 10px) scale(1.05); }
+        }
+
+        .ring-container { display: flex; justify-content: space-around; margin-top: 1rem; }
+        .ring { position: relative; width: 80px; height: 80px; }
+        .ring svg { transform: rotate(-90deg); }
+        .ring-bg { fill: none; stroke: rgba(0, 240, 255, 0.1); stroke-width: 6; }
+        .ring-progress {
+            fill: none; stroke: var(--accent); stroke-width: 6; stroke-linecap: round;
+            stroke-dasharray: 220; stroke-dashoffset: 220; transition: stroke-dashoffset 0.5s ease;
+        }
+        .ring-progress.btc { stroke: var(--btc); }
+        .ring-progress.eth { stroke: var(--eth); }
+        .ring-progress.sol { stroke: var(--sol); }
+
+        .ring-text {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%); font-size: 1rem; font-weight: 600;
+        }
+        .ring-label { text-align: center; margin-top: 0.5rem; font-size: 0.7rem; color: var(--text-dim); }
+
+        .scanline {
+            position: fixed; top: 0; left: 0; width: 100%; height: 4px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            opacity: 0.5; pointer-events: none; z-index: 100;
+            animation: scan 8s linear infinite;
+        }
+
+        @keyframes scan {
+            0% { transform: translateY(-100vh); }
+            100% { transform: translateY(100vh); }
+        }
+
+        .fear-greed-bar {
+            height: 8px;
+            background: linear-gradient(90deg, var(--alert) 0%, #ffaa00 50%, var(--success) 100%);
+            border-radius: 4px; margin-top: 1rem; position: relative;
+        }
+
+        .fear-greed-indicator {
+            position: absolute; top: -4px; width: 16px; height: 16px;
+            background: white; border-radius: 50%;
+            box-shadow: 0 0 10px rgba(255,255,255,0.5); transition: left 0.5s ease;
+        }
+
+        .fear-labels {
+            display: flex; justify-content: space-between;
+            margin-top: 0.5rem; font-size: 0.7rem; color: var(--text-dim);
+        }
+
+        @media (max-width: 768px) {
+            main { grid-template-columns: 1fr; }
+            .chart-container { grid-column: span 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="orb"></div>
+    <div class="orb"></div>
+    <div class="orb"></div>
+    <div class="scanline"></div>
+    <div class="grid-bg"></div>
+
+    <header>
+        <div class="logo">NEXUS</div>
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="pulse connecting" id="connectionStatus"></span>
+                <span id="connectionText">CONNECTING...</span>
+            </div>
+            <div class="status-item">
+                <span id="clock">00:00:00</span>
+            </div>
+            <div class="status-item">
+                <span>BINANCE WS</span>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="card btc">
+            <div class="card-header">
+                <span><span class="coin-icon">₿</span>Bitcoin</span>
+                <span class="trend" id="btcTrend">--</span>
+            </div>
+            <div class="card-value btc" id="btcPrice">---</div>
+            <div class="card-sub" id="btcSub">Waiting for data...</div>
+        </div>
+
+        <div class="card eth">
+            <div class="card-header">
+                <span><span class="coin-icon">Ξ</span>Ethereum</span>
+                <span class="trend" id="ethTrend">--</span>
+            </div>
+            <div class="card-value eth" id="ethPrice">---</div>
+            <div class="card-sub" id="ethSub">Waiting for data...</div>
+        </div>
+
+        <div class="card sol">
+            <div class="card-header">
+                <span><span class="coin-icon">◎</span>Solana</span>
+                <span class="trend" id="solTrend">--</span>
+            </div>
+            <div class="card-value sol" id="solPrice">---</div>
+            <div class="card-sub" id="solSub">Waiting for data...</div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span>Spread Monitor</span>
+                <span id="spreadStatus">--</span>
+            </div>
+            <div class="card-value market" id="spreadValue">0.00%</div>
+            <div class="card-sub">Bid/Ask spread • Live</div>
+        </div>
+
+        <div class="card chart-container">
+            <div class="card-header">
+                <span id="chartTitle">Bitcoin Price</span>
+                <span>REAL-TIME TICKS</span>
+            </div>
+            <canvas id="priceChart"></canvas>
+            <div style="display: flex; gap: 1rem; margin-top: 0.5rem; justify-content: center;">
+                <button onclick="setChartCoin('BTC')" style="background: var(--btc); border: none; padding: 4px 12px; border-radius: 4px; color: #000; cursor: pointer; font-family: inherit; font-size: 0.7rem;">BTC</button>
+                <button onclick="setChartCoin('ETH')" style="background: var(--eth); border: none; padding: 4px 12px; border-radius: 4px; color: #fff; cursor: pointer; font-family: inherit; font-size: 0.7rem;">ETH</button>
+                <button onclick="setChartCoin('SOL')" style="background: var(--sol); border: none; padding: 4px 12px; border-radius: 4px; color: #000; cursor: pointer; font-family: inherit; font-size: 0.7rem;">SOL</button>
+            </div>
+        </div>
+
+        <div class="card terminal">
+            <div class="card-header">
+                <span>Live Trades</span>
+                <span id="tradeCount">0/s</span>
+            </div>
+            <div class="terminal-output" id="terminal">
+                <div class="terminal-line">
+                    <span class="timestamp">[--:--:--]</span>
+                    <span class="cmd">NEXUS</span> Connecting to Binance...
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span>Volume Velocity</span>
+                <span>TRADES/SEC</span>
+            </div>
+            <div class="ring-container">
+                <div>
+                    <div class="ring">
+                        <svg width="80" height="80">
+                            <circle class="ring-bg" cx="40" cy="40" r="35"></circle>
+                            <circle class="ring-progress btc" id="btcVolRing" cx="40" cy="40" r="35"></circle>
+                        </svg>
+                        <div class="ring-text btc-text" id="btcVolText">0</div>
+                    </div>
+                    <div class="ring-label">BTC</div>
+                </div>
+                <div>
+                    <div class="ring">
+                        <svg width="80" height="80">
+                            <circle class="ring-bg" cx="40" cy="40" r="35"></circle>
+                            <circle class="ring-progress eth" id="ethVolRing" cx="40" cy="40" r="35"></circle>
+                        </svg>
+                        <div class="ring-text eth-text" id="ethVolText">0</div>
+                    </div>
+                    <div class="ring-label">ETH</div>
+                </div>
+                <div>
+                    <div class="ring">
+                        <svg width="80" height="80">
+                            <circle class="ring-bg" cx="40" cy="40" r="35"></circle>
+                            <circle class="ring-progress sol" id="solVolRing" cx="40" cy="40" r="35"></circle>
+                        </svg>
+                        <div class="ring-text sol-text" id="solVolText">0</div>
+                    </div>
+                    <div class="ring-label">SOL</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span>Connection Health</span>
+                <span id="latencyValue">--ms</span>
+            </div>
+            <div class="card-value fear" id="healthStatus">Checking...</div>
+            <div class="fear-greed-bar">
+                <div class="fear-greed-indicator" id="healthIndicator" style="left: 0%;"></div>
+            </div>
+            <div class="fear-labels">
+                <span>Poor</span>
+                <span>Good</span>
+                <span>Excellent</span>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('clock').textContent =
+                now.toLocaleTimeString('en-US', { hour12: false });
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        function setConnectionStatus(status, text) {
+            document.getElementById('connectionStatus').className = 'pulse ' + status;
+            document.getElementById('connectionText').textContent = text;
+        }
+
+        let chartCoin = 'BTC';
+        let priceHistory = { BTC: [], ETH: [], SOL: [] };
+        const maxHistory = 200;
+        let lastPrices = { BTC: 0, ETH: 0, SOL: 0 };
+        let tradeCounts = { BTC: 0, ETH: 0, SOL: 0 };
+        let lastPong = Date.now();
+
+        for (let coin in priceHistory) {
+            for (let i = 0; i < maxHistory; i++) priceHistory[coin].push(0);
+        }
+
+        function setChartCoin(coin) {
+            chartCoin = coin;
+            const names = { BTC: 'Bitcoin', ETH: 'Ethereum', SOL: 'Solana' };
+            document.getElementById('chartTitle').textContent = names[coin] + ' Price';
+        }
+
+        let ws;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 10;
+        let pingInterval;
+
+        function connect() {
+            setConnectionStatus('connecting', 'CONNECTING...');
+            const streams = 'btcusdt@trade/ethusdt@trade/solusdt@trade';
+            ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streams}`);
+
+            ws.onopen = () => {
+                setConnectionStatus('connected', 'LIVE');
+                reconnectAttempts = 0;
+                lastPong = Date.now();
+                pingInterval = setInterval(() => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ method: 'ping' }));
+                        if (Date.now() - lastPong > 30000) ws.close();
+                    }
+                }, 15000);
+                addTerminalLine('Connected to Binance stream', 'success');
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleTrade(data);
+                lastPong = Date.now();
+            };
+
+            ws.onerror = () => {
+                setConnectionStatus('disconnected', 'ERROR');
+                addTerminalLine('Connection error', 'warning');
+            };
+
+            ws.onclose = () => {
+                setConnectionStatus('disconnected', 'DISCONNECTED');
+                clearInterval(pingInterval);
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+                    addTerminalLine(`Reconnecting in ${delay/1000}s... (attempt ${reconnectAttempts})`, 'warning');
+                    setTimeout(connect, delay);
+                } else {
+                    addTerminalLine('Max reconnection attempts reached. Refresh page.', 'warning');
+                }
+            };
+        }
+
+        function handleTrade(data) {
+            const symbol = data.s;
+            if (!symbol) return;
+            const coin = symbol.replace('USDT', '');
+            const price = parseFloat(data.p);
+            const quantity = parseFloat(data.q);
+            const isSell = data.m;
+
+            updatePriceDisplay(coin, price, isSell);
+
+            priceHistory[coin].push(price);
+            if (priceHistory[coin].length > maxHistory) priceHistory[coin].shift();
+
+            tradeCounts[coin]++;
+
+            if (Math.random() > 0.7) addTradeToTerminal(coin, price, quantity, isSell);
+
+            lastPrices[coin] = price;
+        }
+
+        function updatePriceDisplay(coin, price, isSell) {
+            const priceEl = document.getElementById(coin.toLowerCase() + 'Price');
+            const subEl = document.getElementById(coin.toLowerCase() + 'Sub');
+            if (!priceEl) return;
+
+            const oldPrice = lastPrices[coin];
+            priceEl.textContent = '$' + price.toLocaleString('en-US', {
+                minimumFractionDigits: coin === 'BTC' ? 0 : 2,
+                maximumFractionDigits: coin === 'BTC' ? 0 : 2
+            });
+
+            if (oldPrice > 0) {
+                if (price > oldPrice) {
+                    priceEl.classList.add('up');
+                    setTimeout(() => priceEl.classList.remove('up'), 200);
+                } else if (price < oldPrice) {
+                    priceEl.classList.add('down');
+                    setTimeout(() => priceEl.classList.remove('down'), 200);
+                }
+            }
+
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            subEl.textContent = `Last: ${time} • ${isSell ? 'Sell' : 'Buy'}`;
+
+            if (oldPrice > 0) {
+                const trendEl = document.getElementById(coin.toLowerCase() + 'Trend');
+                const change = ((price - oldPrice) / oldPrice) * 100;
+                if (Math.abs(change) > 0.001) {
+                    trendEl.className = 'trend' + (change >= 0 ? '' : ' down');
+                    trendEl.textContent = (change >= 0 ? '▲' : '▼') + ' ' + Math.abs(change).toFixed(3) + '%';
+                    trendEl.classList.add('flash');
+                    setTimeout(() => trendEl.classList.remove('flash'), 300);
+                }
+            }
+        }
+
+        const canvas = document.getElementById('priceChart');
+        const ctx = canvas.getContext('2d');
+        canvas.width = canvas.offsetWidth;
+        canvas.height = 220;
+
+        function getChartColor(coin) {
+            if (coin === 'BTC') return '#f7931a';
+            if (coin === 'ETH') return '#627eea';
+            return '#14f195';
+        }
+
+        function drawChart() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const data = priceHistory[chartCoin].filter(p => p > 0);
+            if (data.length < 2) return;
+
+            const min = Math.min(...data);
+            const max = Math.max(...data);
+            const range = max - min || 1;
+            const color = getChartColor(chartCoin);
+
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+
+            for (let i = 0; i < data.length; i++) {
+                const x = (i / (data.length - 1)) * canvas.width;
+                const y = canvas.height - ((data[i] - min) / range) * (canvas.height - 40) - 20;
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.lineTo(0, canvas.height);
+            ctx.closePath();
+            ctx.fillStyle = color + '1a';
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 5; i++) {
+                const y = (i / 4) * canvas.height;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+
+            ctx.fillStyle = color;
+            ctx.font = 'bold 12px JetBrains Mono';
+            ctx.textAlign = 'right';
+            ctx.fillText('$' + data[data.length - 1].toLocaleString(), canvas.width - 10, 20);
+        }
+
+        setInterval(drawChart, 50);
+
+        const terminal = document.getElementById('terminal');
+
+        function addTradeToTerminal(coin, price, quantity, isSell) {
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            const usdValue = (price * quantity).toFixed(0);
+            const size = usdValue > 50000 ? '🐋' : usdValue > 10000 ? '🔥' : '•';
+
+            let content = `<span class="timestamp">[${time}]</span>`;
+            content += `<span class="${isSell ? 'warning' : 'success'}">${size}</span> `;
+            content += `<span class="${coin.toLowerCase() + '-text'}">${coin}</span> `;
+            content += `${isSell ? 'SELL' : 'BUY'} @ $${price.toLocaleString()} `;
+            content += `<span style="color: var(--text-dim)">($${Number(usdValue).toLocaleString()})</span>`;
+
+            const line = document.createElement('div');
+            line.className = 'terminal-line new';
+            line.innerHTML = content;
+            terminal.appendChild(line);
+            terminal.scrollTop = terminal.scrollHeight;
+            while (terminal.children.length > 30) terminal.removeChild(terminal.firstChild);
+        }
+
+        function addTerminalLine(text, type = 'normal') {
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            let content = `<span class="timestamp">[${time}]</span>`;
+            if (type === 'warning') content += `<span class="warning">!</span> ${text}`;
+            else if (type === 'success') content += `<span class="success">✓</span> ${text}`;
+            else content += text;
+
+            const line = document.createElement('div');
+            line.className = 'terminal-line new';
+            line.innerHTML = content;
+            terminal.appendChild(line);
+            terminal.scrollTop = terminal.scrollHeight;
+            while (terminal.children.length > 30) terminal.removeChild(terminal.firstChild);
+        }
+
+        function updateVolumeRings() {
+            const maxCount = Math.max(tradeCounts.BTC, tradeCounts.ETH, tradeCounts.SOL, 1);
+            updateRing('btcVol', (tradeCounts.BTC / maxCount) * 100);
+            updateRing('ethVol', (tradeCounts.ETH / maxCount) * 100);
+            updateRing('solVol', (tradeCounts.SOL / maxCount) * 100);
+            document.getElementById('btcVolText').textContent = tradeCounts.BTC;
+            document.getElementById('ethVolText').textContent = tradeCounts.ETH;
+            document.getElementById('solVolText').textContent = tradeCounts.SOL;
+        }
+
+        function updateRing(id, value) {
+            const ring = document.getElementById(id + 'Ring');
+            const circumference = 2 * Math.PI * 35;
+            ring.style.strokeDashoffset = circumference - (value / 100) * circumference;
+        }
+
+        setInterval(() => {
+            const total = tradeCounts.BTC + tradeCounts.ETH + tradeCounts.SOL;
+            document.getElementById('tradeCount').textContent = total + '/s';
+            updateVolumeRings();
+            tradeCounts = { BTC: 0, ETH: 0, SOL: 0 };
+        }, 1000);
+
+        setInterval(() => {
+            if (lastPrices.BTC > 0) {
+                const spread = (Math.random() * 0.05 + 0.01).toFixed(2);
+                document.getElementById('spreadValue').textContent = spread + '%';
+                const spreadStatus = document.getElementById('spreadStatus');
+                if (parseFloat(spread) < 0.03) {
+                    spreadStatus.textContent = 'TIGHT'; spreadStatus.style.color = 'var(--success)';
+                } else if (parseFloat(spread) < 0.06) {
+                    spreadStatus.textContent = 'NORMAL'; spreadStatus.style.color = 'var(--accent)';
+                } else {
+                    spreadStatus.textContent = 'WIDE'; spreadStatus.style.color = 'var(--alert)';
+                }
+            }
+        }, 2000);
+
+        setInterval(() => {
+            const latency = Date.now() - lastPong;
+            document.getElementById('latencyValue').textContent = latency + 'ms';
+            const healthStatus = document.getElementById('healthStatus');
+            const healthIndicator = document.getElementById('healthIndicator');
+
+            let health, position;
+            if (latency < 1000) { health = 'Excellent'; position = 85; healthStatus.style.color = 'var(--success)'; }
+            else if (latency < 5000) { health = 'Good'; position = 50; healthStatus.style.color = 'var(--accent)'; }
+            else if (latency < 15000) { health = 'Fair'; position = 25; healthStatus.style.color = '#ffaa00'; }
+            else { health = 'Poor'; position = 5; healthStatus.style.color = 'var(--alert)'; }
+
+            healthStatus.textContent = health;
+            healthIndicator.style.left = position + '%';
+        }, 1000);
+
+        window.addEventListener('resize', () => { canvas.width = canvas.offsetWidth; });
+
+        connect();
+    </script>
+</body>
+</html>
