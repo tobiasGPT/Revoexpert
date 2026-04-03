@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEXUS // Video Editor</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <div class="grid-bg"></div>
+  <div class="scanline"></div>
+
+  <header>
+    <div class="logo">NEXUS</div>
+    <div class="header-meta">
+      <div class="subtitle">VIDEO EDITOR // FFMPEG INTERFACE</div>
+      <button class="chip-btn" type="button" onclick="refreshWorkspace().catch(error => console.error(error))">↻ Refresh Workspace</button>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('editor')">▶ Logo Editor</div>
+    <div class="tab" onclick="switchTab('reels')">✂ YouTube → Reels</div>
+  </div>
+
+  <div class="status-grid" id="workspaceStatus">
+    <div class="status-card">
+      <div class="status-head">
+        <span class="status-label">Workspace</span>
+        <span class="status-pill warn">Loading</span>
+      </div>
+      <div class="status-value">--</div>
+      <div class="status-note">Checking tools, source clips, and recent outputs.</div>
+    </div>
+  </div>
+
+  <div id="tab-editor" class="tab-content active">
+    <div class="layout">
+      <div class="col">
+        <div class="card">
+          <div class="card-title-row">
+            <div class="card-title">Select Video</div>
+            <button class="chip-btn small" type="button" onclick="refreshWorkspace().catch(error => console.error(error))">Refresh Clips</button>
+          </div>
+          <div class="file-list" id="fileList">Loading...</div>
+          <div class="directory-note" id="sourceDirectoryNote"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Video Info</div>
+          <div class="stat"><span>File</span><span class="stat-val" id="statFile">—</span></div>
+          <div class="stat"><span>Resolution</span><span class="stat-val" id="statRes">—</span></div>
+          <div class="stat"><span>Duration</span><span class="stat-val" id="statDur">—</span></div>
+          <div class="stat"><span>Size</span><span class="stat-val" id="statSize">—</span></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Source Preview</div>
+          <div class="preview-box" id="previewBox"><span class="preview-placeholder">NO FILE SELECTED</span></div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="card">
+          <div class="card-title">Logo Settings</div>
+          <label>Position</label>
+          <div class="position-grid" id="logoPositionGrid">
+            <button class="pos-btn" onclick="setPos('top-left', this)">↖ TL</button>
+            <button class="pos-btn" onclick="setPos('top-center', this)">↑ TC</button>
+            <button class="pos-btn" onclick="setPos('top-right', this)">↗ TR</button>
+            <button class="pos-btn" onclick="setPos('center-left', this)">← CL</button>
+            <button class="pos-btn active" onclick="setPos('center', this)">● CTR</button>
+            <button class="pos-btn" onclick="setPos('center-right', this)">→ CR</button>
+            <button class="pos-btn" onclick="setPos('bottom-left', this)">↙ BL</button>
+            <button class="pos-btn" onclick="setPos('bottom-center', this)">↓ BC</button>
+            <button class="pos-btn" onclick="setPos('bottom-right', this)">↘ BR</button>
+          </div>
+
+          <label>Logo Size — <span id="sizeVal">600</span>px</label>
+          <input type="range" id="logoSize" min="200" max="1400" value="600" step="50" oninput="document.getElementById('sizeVal').textContent=this.value">
+
+          <div class="toggle-row">
+            <label class="toggle"><input type="checkbox" id="fadeToggle" checked><span class="slider-toggle"></span></label>
+            <span class="toggle-label">Fade In</span>
+          </div>
+
+          <div id="fadeOptions">
+            <label>Appears in last — <span id="fadeStartVal">3</span>s</label>
+            <input type="range" id="fadeDuration" min="1" max="8" value="3" step="0.5" oninput="document.getElementById('fadeStartVal').textContent=this.value">
+            <label>Fade length — <span id="fadeLenVal">2</span>s</label>
+            <input type="range" id="fadeLen" min="0.5" max="5" value="2" step="0.5" oninput="document.getElementById('fadeLenVal').textContent=this.value">
+          </div>
+
+          <div class="toggle-row">
+            <label class="toggle"><input type="checkbox" id="bgToggle"><span class="slider-toggle"></span></label>
+            <span class="toggle-label">Dark Background Behind Logo</span>
+          </div>
+
+          <div class="toggle-row">
+            <label class="toggle"><input type="checkbox" id="ghostToggle"><span class="slider-toggle"></span></label>
+            <span class="toggle-label">Ghost Logo (washed out)</span>
+          </div>
+
+          <div id="ghostOptions" class="collapsed-panel">
+            <label>Ghost Size — <span id="ghostSizeVal">1000</span>px</label>
+            <input type="range" id="ghostSize" min="300" max="2400" value="1000" step="50" oninput="document.getElementById('ghostSizeVal').textContent=this.value">
+            <label>Opacity — <span id="ghostOpacVal">12</span>%</label>
+            <input type="range" id="ghostOpac" min="3" max="50" value="12" step="1" oninput="document.getElementById('ghostOpacVal').textContent=this.value">
+            <label>Ghost Position</label>
+            <div class="position-grid" id="ghostPositionGrid">
+              <button class="pos-btn" onclick="setGhostPos('top-left', this)">↖ TL</button>
+              <button class="pos-btn" onclick="setGhostPos('top-center', this)">↑ TC</button>
+              <button class="pos-btn" onclick="setGhostPos('top-right', this)">↗ TR</button>
+              <button class="pos-btn" onclick="setGhostPos('center-left', this)">← CL</button>
+              <button class="pos-btn active" onclick="setGhostPos('center', this)">● CTR</button>
+              <button class="pos-btn" onclick="setGhostPos('center-right', this)">→ CR</button>
+              <button class="pos-btn" onclick="setGhostPos('bottom-left', this)">↙ BL</button>
+              <button class="pos-btn" onclick="setGhostPos('bottom-center', this)">↓ BC</button>
+              <button class="pos-btn" onclick="setGhostPos('bottom-right', this)">↘ BR</button>
+            </div>
+
+            <div class="toggle-row">
+              <label class="toggle"><input type="checkbox" id="ghostFadeToggle"><span class="slider-toggle"></span></label>
+              <span class="toggle-label">Timed Appearance</span>
+            </div>
+
+            <div id="ghostFadeOptions" class="collapsed-panel">
+              <label>Appears in last — <span id="ghostStartVal">3</span>s</label>
+              <input type="range" id="ghostFadeStart" min="1" max="15" value="3" step="0.5" oninput="document.getElementById('ghostStartVal').textContent=this.value">
+              <label>Fade length — <span id="ghostFadeLenVal">1.5</span>s</label>
+              <input type="range" id="ghostFadeLen" min="0.5" max="5" value="1.5" step="0.5" oninput="document.getElementById('ghostFadeLenVal').textContent=this.value">
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">CTA Overlay</div>
+          <div class="toggle-row">
+            <label class="toggle"><input type="checkbox" id="ctaToggle"><span class="slider-toggle"></span></label>
+            <span class="toggle-label">Enable CTA at end</span>
+          </div>
+          <div id="ctaOptions" class="collapsed-panel">
+            <label>CTA Text</label>
+            <input type="text" id="ctaText" value="@viviandco" placeholder="Shop Now / @handle">
+            <label>Effect</label>
+            <select id="ctaEffect">
+              <option value="slide">Slide Up</option>
+              <option value="fade">Fade In</option>
+            </select>
+            <div class="toggle-row">
+              <label class="toggle"><input type="checkbox" id="ctaArrow" checked><span class="slider-toggle"></span></label>
+              <span class="toggle-label">Animated ↑ arrow</span>
+            </div>
+            <div class="toggle-row">
+              <label class="toggle"><input type="checkbox" id="ctaPill"><span class="slider-toggle"></span></label>
+              <span class="toggle-label">Pill background</span>
+            </div>
+            <label>Appears in last — <span id="ctaStartVal">3</span>s</label>
+            <input type="range" id="ctaStart" min="1" max="10" value="3" step="0.5" oninput="document.getElementById('ctaStartVal').textContent=this.value">
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Render</div>
+          <button class="btn" id="renderBtn" onclick="renderLogo()">▶ RENDER VIDEO</button>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+          <div class="log-box" id="logBox"><div class="log-line dim">// Ready — select a video and hit render</div></div>
+          <div id="outputPath"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Output Preview</div>
+          <div class="preview-box" id="outputPreviewBox"><span class="preview-placeholder">OUTPUT WILL APPEAR HERE</span></div>
+          <div class="recent-list" id="recentEditedList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-reels" class="tab-content">
+    <div class="layout">
+      <div class="col">
+        <div class="card">
+          <div class="card-title">YouTube Video</div>
+          <label>YouTube URL</label>
+          <input type="url" id="ytUrl" placeholder="https://www.youtube.com/watch?v=...">
+          <button class="btn" onclick="fetchInfo()">⟳ FETCH INFO</button>
+          <div id="ytPreview"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Cut Settings</div>
+          <label>Reel Duration</label>
+          <select id="reelDuration">
+            <option value="15">15 seconds</option>
+            <option value="30" selected>30 seconds</option>
+            <option value="45">45 seconds</option>
+            <option value="60">60 seconds</option>
+            <option value="90">90 seconds</option>
+          </select>
+
+          <label>Cut Mode</label>
+          <select id="cutMode" onchange="toggleCutMode()">
+            <option value="auto">Auto — split entire video evenly</option>
+            <option value="manual">Manual — define cut points</option>
+          </select>
+
+          <div id="manualCuts" class="collapsed-panel" style="display:none;">
+            <label>Cut Points (start–end in seconds)</label>
+            <div id="cutList"></div>
+            <button class="btn" type="button" onclick="addCut()">+ ADD CUT</button>
+          </div>
+
+          <div class="toggle-row">
+            <label class="toggle"><input type="checkbox" id="reelLogoToggle" checked><span class="slider-toggle"></span></label>
+            <span class="toggle-label">Add Vivi&Co Logo</span>
+          </div>
+
+          <div id="reelLogoOptions">
+            <label>Logo Position</label>
+            <div class="position-grid" id="reelPositionGrid">
+              <button class="pos-btn" onclick="setReelPos('top-left', this)">↖ TL</button>
+              <button class="pos-btn active" onclick="setReelPos('top-center', this)">↑ TC</button>
+              <button class="pos-btn" onclick="setReelPos('top-right', this)">↗ TR</button>
+              <button class="pos-btn" onclick="setReelPos('center-left', this)">← CL</button>
+              <button class="pos-btn" onclick="setReelPos('center', this)">● CTR</button>
+              <button class="pos-btn" onclick="setReelPos('center-right', this)">→ CR</button>
+              <button class="pos-btn" onclick="setReelPos('bottom-left', this)">↙ BL</button>
+              <button class="pos-btn" onclick="setReelPos('bottom-center', this)">↓ BC</button>
+              <button class="pos-btn" onclick="setReelPos('bottom-right', this)">↘ BR</button>
+            </div>
+          </div>
+
+          <div class="toggle-row">
+            <label class="toggle"><input type="checkbox" id="reelCropToggle" checked><span class="slider-toggle"></span></label>
+            <span class="toggle-label">Crop to 9:16 (portrait reels)</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Captions</div>
+          <div class="toggle-row">
+            <label class="toggle"><input type="checkbox" id="captionToggle"><span class="slider-toggle"></span></label>
+            <span class="toggle-label">Auto Captions</span>
+          </div>
+          <div id="captionOptions" class="collapsed-panel">
+            <label>Language</label>
+            <input type="text" id="captionLang" value="en" placeholder="en, es, fr, ar...">
+            <label>Font Size — <span id="captionSizeVal">28</span>px</label>
+            <input type="range" id="captionSize" min="12" max="64" value="28" step="1" oninput="document.getElementById('captionSizeVal').textContent=this.value">
+            <label>Position</label>
+            <select id="captionPos">
+              <option value="2">Bottom Center</option>
+              <option value="8">Top Center</option>
+            </select>
+            <div class="toggle-row">
+              <label class="toggle"><input type="checkbox" id="captionBox" checked><span class="slider-toggle"></span></label>
+              <span class="toggle-label">Background box</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="card">
+          <div class="card-title">Download & Cut</div>
+          <button class="btn" id="reelBtn" onclick="startReels()">▶ DOWNLOAD & CUT REELS</button>
+          <div class="progress-bar"><div class="progress-fill" id="reelProgress" style="width:0%"></div></div>
+          <div class="log-box" id="reelLog"><div class="log-line dim">// Paste a YouTube URL and hit go</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Output Reels</div>
+          <div id="reelOutput"><div class="preview-placeholder padded">Reels will appear here</div></div>
+          <div class="recent-list" id="recentReelsList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>

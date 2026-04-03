@@ -5,3 +5,4 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 python3 -m py_compile ffmpeg_editor.py
+python3 tests/smoke_test.py

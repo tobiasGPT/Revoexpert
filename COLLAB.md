@@ -95,3 +95,41 @@ Use the next highest session number. Do not reuse an existing number.
 **Notes for next session:**
 - subtitle generation code is now present inside `ffmpeg_editor.py`, so keep non-subtitle edits surgical until Claude’s reel pass is settled
 - if you move the CapCut workspace or binaries, update the env vars instead of editing source
+
+---
+
+### Session 004 — GPT Codex — 2026-04-03
+
+**Work done:**
+- finished the UI/backend cleanup pass that was still in progress:
+  - split the inline app into `templates/index.html`, `static/app.css`, and `static/app.js`
+  - removed the stale root `index.html`
+  - updated README/docs to match the refactored structure and env-based config
+- tightened the repo health gate:
+  - fixed the smoke test import path
+  - added route checks for `/`, `/static/app.css`, `/static/app.js`, `/yt_info` bad input, and `/yt_reels` bad input
+  - wired `tests/smoke_test.py` into `./scripts/check.sh`
+- fixed a real UI regression in the split frontend:
+  - logo position controls no longer clear the ghost-logo or reel-logo active states
+- completed an end-to-end subtitle pass for reels:
+  - verified the Homebrew `ffmpeg 8.1` build on this Mac has neither `subtitles` nor `drawtext`
+  - replaced caption burn-in with Pillow-generated PNG caption overlays so reels do not depend on optional ffmpeg text filters
+  - fixed caption accounting so `segments_burned` only increments on successful output
+  - raised the default caption size in the UI from `18` to `28` for better mobile readability
+- asked Claude for an independent read-only review; the useful callouts were:
+  - commit the refactor cleanly so CI/tests see the same code as the working tree
+  - add at least some route coverage around the YouTube endpoints
+
+**Verification:**
+- `./scripts/check.sh` passes
+- `node --check static/app.js` passes
+- live `GET /health` returns `200`
+- live `GET /` serves the split template/static frontend
+- live `POST /yt_reels` with captions enabled returns `ok: true`
+- generated reel verified at `/Users/tobiaslundgren/Movies/CapCut/reels/reel_bb1ff790_01.mp4`
+- extracted frame review confirmed visible burned-in subtitles
+
+**Notes for next session:**
+- the app is materially healthier, but `ffmpeg_editor.py` is still the main backend hotspot and remains worth splitting if work continues
+- long renders/downloads still run synchronously inside the Flask request cycle, so the dev server is blocked while a reel job is active
+- Claude’s CI lane remains in `.github/workflows/ci.yml`; avoid overlapping CI edits without coordinating

@@ -9,20 +9,32 @@ Local Flask app for two video workflows:
 
 - Python 3
 - Flask
+- Pillow
 - `ffmpeg`
 - `ffprobe`
 - `yt-dlp`
 
 ## Local Media Assumptions
 
-The app currently expects these paths on this Mac:
+The app defaults to these paths on this Mac:
 
 - source clips: `/Users/tobiaslundgren/Movies/CapCut`
 - edited outputs: `/Users/tobiaslundgren/Movies/CapCut/vivi_edited`
 - reels outputs: `/Users/tobiaslundgren/Movies/CapCut/reels`
 - logo overlay: `/Users/tobiaslundgren/Movies/CapCut/viviandco_overlay.png`
 
-If those move, update the constants near the top of [ffmpeg_editor.py](/Users/tobiaslundgren/Revoexpert/ffmpeg_editor.py).
+Override them with env vars instead of editing source:
+
+- `REVO_CAPCUT_DIR`
+- `REVO_EDITED_DIR`
+- `REVO_REELS_DIR`
+- `REVO_OVERLAY_PATH`
+- `REVO_FFMPEG_BIN`
+- `REVO_FFPROBE_BIN`
+- `REVO_YTDLP_BIN`
+- `REVO_PORT`
+
+Copy [`.env.example`](/Users/tobiaslundgren/Revoexpert/.env.example) if you want a starting point.
 
 ## Run
 
@@ -46,14 +58,23 @@ Then open [http://127.0.0.1:7777/](http://127.0.0.1:7777/).
 ## Current App Endpoints
 
 - `GET /`
+- `GET /health`
+- `GET /status`
+- `GET /outputs`
 - `GET /files`
 - `POST /info`
 - `GET /video`
 - `POST /render`
 - `POST /yt_info`
 - `POST /yt_reels`
-- `GET /status`
-- `GET /outputs`
+
+## Structure
+
+- [ffmpeg_editor.py](/Users/tobiaslundgren/Revoexpert/ffmpeg_editor.py): Flask routes and ffmpeg/yt-dlp orchestration
+- [templates/index.html](/Users/tobiaslundgren/Revoexpert/templates/index.html): app markup
+- [static/app.css](/Users/tobiaslundgren/Revoexpert/static/app.css): visual styling
+- [static/app.js](/Users/tobiaslundgren/Revoexpert/static/app.js): client-side UI logic
+- [tests/smoke_test.py](/Users/tobiaslundgren/Revoexpert/tests/smoke_test.py): route-level smoke coverage
 
 ## Collaboration Notes
 
