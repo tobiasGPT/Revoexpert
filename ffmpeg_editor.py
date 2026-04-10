@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
 import glob
 import json
 import os
@@ -8,13 +8,28 @@ import subprocess
 import uuid
 
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+except ImportError:  # pragma: no cover
+    pass
+
+try:
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
 except ImportError:  # pragma: no cover - handled at runtime if dependency is missing
     Image = None
     ImageDraw = None
     ImageFont = None
+    ImageOps = None
+
+try:
+    from google import genai as google_genai
+    from google.genai import types as genai_types
+except ImportError:  # pragma: no cover
+    google_genai = None
+    genai_types = None
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 
 def env_path(name, default):
@@ -29,6 +44,27 @@ def env_int(name, default):
         return int(raw)
     except ValueError:
         return default
+
+
+def env_str(name, default=""):
+    return (os.getenv(name, default) or default).strip()
+
+
+def file_mtime(path):
+    try:
+        return int(os.path.getmtime(path))
+    except OSError:
+        return 0
+
+
+def static_asset_version():
+    root = os.path.dirname(os.path.abspath(__file__))
+    return str(
+        max(
+            file_mtime(os.path.join(root, "static", "app.css")),
+            file_mtime(os.path.join(root, "static", "app.js")),
+        )
+    )
 
 
 def env_bin(name, default, executable):
@@ -269,6 +305,12 @@ def trim_srt_segment(srt_path, start_s, end_s, out_path):
 CAPCUT_DIR = env_path("REVO_CAPCUT_DIR", "/Users/tobiaslundgren/Movies/CapCut")
 EDITED_DIR = env_path("REVO_EDITED_DIR", os.path.join(CAPCUT_DIR, "vivi_edited"))
 REELS_DIR = env_path("REVO_REELS_DIR", os.path.join(CAPCUT_DIR, "reels"))
+CROPS_DIR = env_path("REVO_CROPS_DIR", os.path.join(CAPCUT_DIR, "crops"))
+COMPRESSED_DIR = env_path("REVO_COMPRESSED_DIR", os.path.join(CROPS_DIR, "compressed"))
+BATCH_EXPORTS_DIR = env_path("REVO_BATCH_DIR", os.path.expanduser("~/Desktop/Nexus Exports"))
+STUDIO_DIR = env_path("REVO_STUDIO_DIR", os.path.join(os.path.expanduser("~/Desktop/Nexus Exports"), "studio"))
+MODELS_DIR = env_path("REVO_MODELS_DIR", os.path.join(os.path.expanduser("~/Desktop/Nexus Exports"), "studio", "models"))
+MODELS_JSON = os.path.join(MODELS_DIR, "models.json")
 OVERLAY = env_path("REVO_OVERLAY_PATH", os.path.join(CAPCUT_DIR, "viviandco_overlay.png"))
 FFMPEG = env_bin("REVO_FFMPEG_BIN", "/opt/homebrew/bin/ffmpeg", "ffmpeg")
 FFPROBE = env_bin("REVO_FFPROBE_BIN", "/opt/homebrew/bin/ffprobe", "ffprobe")
@@ -292,6 +334,11 @@ LOGO_CROP_FILTER = "crop=615:188:132:1827"
 
 os.makedirs(EDITED_DIR, exist_ok=True)
 os.makedirs(REELS_DIR, exist_ok=True)
+os.makedirs(CROPS_DIR, exist_ok=True)
+os.makedirs(COMPRESSED_DIR, exist_ok=True)
+os.makedirs(BATCH_EXPORTS_DIR, exist_ok=True)
+os.makedirs(STUDIO_DIR, exist_ok=True)
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 
 def iter_video_paths(directory):
@@ -375,6 +422,9 @@ def get_workspace_snapshot(include_versions=False):
             "source": CAPCUT_DIR,
             "edited": EDITED_DIR,
             "reels": REELS_DIR,
+            "crops": CROPS_DIR,
+            "compressed": COMPRESSED_DIR,
+            "batch": BATCH_EXPORTS_DIR,
         },
         "config": {
             "overlay": OVERLAY,
@@ -397,7 +447,11 @@ def json_body():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        ga4_measurement_id=env_str("REVO_GA4_MEASUREMENT_ID"),
+        asset_version=static_asset_version(),
+    )
 
 
 @app.route("/status")
@@ -938,6 +992,559 @@ def yt_reels():
     if reels:
         return jsonify({"ok": True, "reels": reels, "caption_status": caption_status})
     return jsonify({"ok": False, "error": last_error or "No reels were created", "caption_status": caption_status})
+
+
+ALLOWED_IMG_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.tiff', '.bmp'}
+
+def safe_img_path(path):
+    """Validate image path is an allowed extension and exists."""
+    if not path:
+        return None
+    path = os.path.realpath(os.path.expanduser(path.strip()))
+    if os.path.isfile(path) and os.path.splitext(path)[1].lower() in ALLOWED_IMG_EXTS:
+        return path
+    return None
+
+
+def image_has_alpha(img):
+    return "A" in img.getbands() or (img.mode == "P" and "transparency" in img.info)
+
+
+def normalize_image_for_crop(img):
+    if ImageOps is not None:
+        img = ImageOps.exif_transpose(img)
+    return img
+
+
+def crop_bounds(img, x, y, w, h):
+    iw, ih = img.size
+    x = min(max(0, x), max(0, iw - 1))
+    y = min(max(0, y), max(0, ih - 1))
+    w = min(max(1, w), iw - x)
+    h = min(max(1, h), ih - y)
+    return x, y, w, h
+
+
+def build_crop_export(cropped, stem, source_ext, quality):
+    source_ext = source_ext.lower()
+    has_alpha = image_has_alpha(cropped)
+
+    if source_ext in {".jpg", ".jpeg"} and not has_alpha:
+        return {
+            "path": f"{stem}.jpg",
+            "format": "JPEG",
+            "image": cropped.convert("RGB"),
+            "save_kwargs": {"quality": quality, "subsampling": 0, "optimize": True},
+        }
+    if source_ext == ".webp":
+        return {
+            "path": f"{stem}.webp",
+            "format": "WEBP",
+            "image": cropped.convert("RGBA" if has_alpha else "RGB"),
+            "save_kwargs": {"quality": quality, "method": 6},
+        }
+
+    compress_level = max(0, min(9, round((100 - quality) / 10)))
+    return {
+        "path": f"{stem}.png",
+        "format": "PNG",
+        "image": cropped.convert("RGBA" if has_alpha else "RGB"),
+        "save_kwargs": {"optimize": True, "compress_level": compress_level},
+    }
+
+@app.route('/img_preview')
+def img_preview():
+    path = safe_img_path(request.args.get('path', ''))
+    if path:
+        return send_file(path)
+    return 'Not found', 404
+
+@app.route('/crop_image', methods=['POST'])
+def crop_image():
+    if Image is None:
+        return jsonify({'ok': False, 'error': 'Pillow is not installed'})
+    data = request.json or {}
+    path = safe_img_path(data.get('path', ''))
+    if not path:
+        return jsonify({'ok': False, 'error': 'Invalid or missing image path'})
+    x = max(0, parse_int(data.get('x'), 0))
+    y = max(0, parse_int(data.get('y'), 0))
+    w = max(1, parse_int(data.get('w'), 1))
+    h = max(1, parse_int(data.get('h'), 1))
+    quality = max(60, min(100, parse_int(data.get('quality'), 97)))
+    try:
+        img = normalize_image_for_crop(Image.open(path))
+        x, y, w, h = crop_bounds(img, x, y, w, h)
+        cropped = img.crop((x, y, x + w, y + h))
+        base, _ = os.path.splitext(path)
+        export = build_crop_export(cropped, f"{base}_crop_{x}_{y}_{w}x{h}", os.path.splitext(path)[1], quality)
+        export["image"].save(export["path"], format=export["format"], **export["save_kwargs"])
+        return jsonify({
+            'ok': True,
+            'output': export["path"],
+            'format': export["format"],
+            'size': f"{os.path.getsize(export['path'])/1024/1024:.1f}MB",
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/crop_upload', methods=['POST'])
+def crop_upload():
+    if Image is None:
+        return jsonify({'ok': False, 'error': 'Pillow is not installed'})
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'ok': False, 'error': 'No file uploaded'})
+    filename = os.path.basename(file.filename)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_IMG_EXTS:
+        return jsonify({'ok': False, 'error': 'Unsupported image type'})
+    x = max(0, parse_int(request.form.get('x'), 0))
+    y = max(0, parse_int(request.form.get('y'), 0))
+    w = max(1, parse_int(request.form.get('w'), 1))
+    h = max(1, parse_int(request.form.get('h'), 1))
+    quality = max(60, min(100, parse_int(request.form.get('quality'), 97)))
+    try:
+        img = normalize_image_for_crop(Image.open(file.stream))
+        x, y, w, h = crop_bounds(img, x, y, w, h)
+        cropped = img.crop((x, y, x + w, y + h))
+        base_name = os.path.splitext(filename)[0]
+        export = build_crop_export(cropped, os.path.join(CROPS_DIR, f"{base_name}_crop_{x}_{y}_{w}x{h}"), ext, quality)
+        export["image"].save(export["path"], format=export["format"], **export["save_kwargs"])
+        return jsonify({
+            'ok': True,
+            'output': export["path"],
+            'format': export["format"],
+            'size': f"{os.path.getsize(export['path'])/1024/1024:.1f}MB",
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/compress_upload', methods=['POST'])
+def compress_upload():
+    if Image is None:
+        return jsonify({'ok': False, 'error': 'Pillow is not installed'})
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'ok': False, 'error': 'No file uploaded'})
+    fmt = request.form.get('format', 'jpeg').lower()
+    quality = max(40, min(100, parse_int(request.form.get('quality'), 90)))
+
+    fmt_map = {
+        'jpeg': ('JPEG', '.jpg'),
+        'webp': ('WEBP', '.webp'),
+        'png': ('PNG', '.png'),
+    }
+    if fmt not in fmt_map:
+        return jsonify({'ok': False, 'error': 'Unsupported format'})
+    pil_fmt, out_ext = fmt_map[fmt]
+
+    try:
+        import io
+        raw = file.read()
+        original_mb = len(raw) / 1024 / 1024
+        img = normalize_image_for_crop(Image.open(io.BytesIO(raw)))
+        has_alpha = image_has_alpha(img)
+
+        if fmt == 'jpeg':
+            if has_alpha:
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                alpha_source = img.convert('RGBA')
+                background.paste(alpha_source, mask=alpha_source.getchannel('A'))
+                img = background
+            else:
+                img = img.convert('RGB')
+        elif fmt == 'webp':
+            img = img.convert('RGBA' if has_alpha else 'RGB')
+        else:
+            img = img.convert('RGBA' if has_alpha else 'RGB')
+
+        base_name = os.path.splitext(os.path.basename(file.filename))[0]
+        out = os.path.join(COMPRESSED_DIR, f"{base_name}_compressed{out_ext}")
+
+        save_kwargs = {'optimize': True}
+        if fmt == 'jpeg':
+            save_kwargs.update({'quality': quality, 'subsampling': 0})
+        elif fmt == 'webp':
+            save_kwargs.update({'quality': quality, 'method': 6})
+        else:
+            save_kwargs['compress_level'] = max(0, min(9, round((100 - quality) / 10)))
+
+        img.save(out, format=pil_fmt, **save_kwargs)
+        out_mb = os.path.getsize(out) / 1024 / 1024
+        savings = max(0.0, (original_mb - out_mb) / original_mb * 100) if original_mb > 0 else 0
+        return jsonify({
+            'ok': True,
+            'output': out,
+            'format': pil_fmt,
+            'original_size': f"{original_mb:.1f} MB",
+            'output_size': f"{out_mb:.1f} MB",
+            'savings': f"{savings:.0f}%",
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+def center_crop_to_ratio(img, ratio_w, ratio_h):
+    iw, ih = img.size
+    target = ratio_w / ratio_h
+    current = iw / ih
+    if current > target:
+        new_w = round(ih * target)
+        x = (iw - new_w) // 2
+        return img.crop((x, 0, x + new_w, ih))
+    else:
+        new_h = round(iw / target)
+        y = (ih - new_h) // 2
+        return img.crop((0, y, iw, y + new_h))
+
+
+@app.route('/batch_crop_upload', methods=['POST'])
+def batch_crop_upload():
+    if Image is None:
+        return jsonify({'ok': False, 'error': 'Pillow is not installed'})
+    files = request.files.getlist('files[]')
+    if not files:
+        return jsonify({'ok': False, 'error': 'No files uploaded'})
+
+    mode = request.form.get('mode', 'manual')  # 'center_ratio' or 'manual'
+    ratio_w = max(1, parse_int(request.form.get('ratio_w'), 1))
+    ratio_h = max(1, parse_int(request.form.get('ratio_h'), 1))
+    x = max(0, parse_int(request.form.get('x'), 0))
+    y = max(0, parse_int(request.form.get('y'), 0))
+    w = max(1, parse_int(request.form.get('w'), 1))
+    h = max(1, parse_int(request.form.get('h'), 1))
+    quality = max(60, min(100, parse_int(request.form.get('quality'), 97)))
+    proportional = request.form.get('proportional', 'true') == 'true'
+    ref_w = max(1, parse_int(request.form.get('ref_w'), 1))
+    ref_h = max(1, parse_int(request.form.get('ref_h'), 1))
+
+    results = []
+    for file in files:
+        if not file or not file.filename:
+            continue
+        filename = os.path.basename(file.filename)
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in ALLOWED_IMG_EXTS:
+            results.append({'name': filename, 'ok': False, 'error': 'Unsupported format'})
+            continue
+        try:
+            img = normalize_image_for_crop(Image.open(file.stream))
+            iw, ih = img.size
+
+            if mode == 'center_ratio':
+                cropped = center_crop_to_ratio(img, ratio_w, ratio_h)
+            else:
+                if proportional:
+                    ax = round(x * iw / ref_w)
+                    ay = round(y * ih / ref_h)
+                    aw = round(w * iw / ref_w)
+                    ah = round(h * ih / ref_h)
+                else:
+                    ax, ay, aw, ah = x, y, w, h
+                ax, ay, aw, ah = crop_bounds(img, ax, ay, aw, ah)
+                cropped = img.crop((ax, ay, ax + aw, ay + ah))
+
+            base_name = os.path.splitext(filename)[0]
+            export = build_crop_export(
+                cropped,
+                os.path.join(BATCH_EXPORTS_DIR, f"{base_name}_crop"),
+                ext,
+                quality,
+            )
+            export["image"].save(export["path"], format=export["format"], **export["save_kwargs"])
+            results.append({
+                'name': filename,
+                'ok': True,
+                'output': export["path"],
+                'size': f"{os.path.getsize(export['path']) / 1024:.0f} KB",
+            })
+        except Exception as e:
+            results.append({'name': filename, 'ok': False, 'error': str(e)})
+
+    return jsonify({'ok': True, 'results': results, 'dest': BATCH_EXPORTS_DIR})
+
+
+@app.route('/batch_compress_upload', methods=['POST'])
+def batch_compress_upload():
+    import io as _io
+    if Image is None:
+        return jsonify({'ok': False, 'error': 'Pillow is not installed'})
+    files = request.files.getlist('files[]')
+    if not files:
+        return jsonify({'ok': False, 'error': 'No files uploaded'})
+
+    fmt = request.form.get('format', 'jpeg').lower()
+    quality = max(40, min(100, parse_int(request.form.get('quality'), 90)))
+    fmt_map = {
+        'jpeg': ('JPEG', '.jpg'),
+        'webp': ('WEBP', '.webp'),
+        'png': ('PNG', '.png'),
+    }
+    if fmt not in fmt_map:
+        return jsonify({'ok': False, 'error': 'Unsupported format'})
+    pil_fmt, out_ext = fmt_map[fmt]
+
+    results = []
+    for file in files:
+        if not file or not file.filename:
+            continue
+        filename = os.path.basename(file.filename)
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in ALLOWED_IMG_EXTS:
+            results.append({'name': filename, 'ok': False, 'error': 'Unsupported format'})
+            continue
+        try:
+            raw = file.read()
+            original_kb = len(raw) / 1024
+            img = normalize_image_for_crop(Image.open(_io.BytesIO(raw)))
+            has_alpha = image_has_alpha(img)
+
+            if fmt == 'jpeg':
+                if has_alpha:
+                    bg = Image.new('RGB', img.size, (255, 255, 255))
+                    alpha_src = img.convert('RGBA')
+                    bg.paste(alpha_src, mask=alpha_src.getchannel('A'))
+                    img = bg
+                else:
+                    img = img.convert('RGB')
+            elif fmt == 'webp':
+                img = img.convert('RGBA' if has_alpha else 'RGB')
+            else:
+                img = img.convert('RGBA' if has_alpha else 'RGB')
+
+            base_name = os.path.splitext(filename)[0]
+            out = os.path.join(BATCH_EXPORTS_DIR, f"{base_name}_compressed{out_ext}")
+            save_kwargs = {'optimize': True}
+            if fmt == 'jpeg':
+                save_kwargs.update({'quality': quality, 'subsampling': 0})
+            elif fmt == 'webp':
+                save_kwargs.update({'quality': quality, 'method': 6})
+            else:
+                save_kwargs['compress_level'] = max(0, min(9, round((100 - quality) / 10)))
+            img.save(out, format=pil_fmt, **save_kwargs)
+            out_kb = os.path.getsize(out) / 1024
+            savings = max(0.0, (original_kb - out_kb) / original_kb * 100) if original_kb > 0 else 0
+            results.append({
+                'name': filename,
+                'ok': True,
+                'output': out,
+                'original_size': f"{original_kb:.0f} KB",
+                'output_size': f"{out_kb:.0f} KB",
+                'savings': f"{savings:.0f}%",
+            })
+        except Exception as e:
+            results.append({'name': filename, 'ok': False, 'error': str(e)})
+
+    return jsonify({'ok': True, 'results': results, 'dest': BATCH_EXPORTS_DIR})
+
+
+# ── Studio Models ─────────────────────────────────────────────────────────────
+
+def _load_models():
+    if not os.path.exists(MODELS_JSON):
+        return []
+    try:
+        with open(MODELS_JSON, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _save_models(models):
+    with open(MODELS_JSON, 'w') as f:
+        json.dump(models, f, indent=2)
+
+
+@app.route('/studio_models', methods=['GET'])
+def studio_models_list():
+    return jsonify({'ok': True, 'models': _load_models()})
+
+
+@app.route('/studio_save_model', methods=['POST'])
+def studio_save_model():
+    model_type = request.form.get('type', 'preset')
+    name = request.form.get('name', '').strip()
+    if not name:
+        return jsonify({'ok': False, 'error': 'Name is required'})
+
+    model_id = uuid.uuid4().hex[:12]
+    entry = {
+        'id': model_id,
+        'type': model_type,
+        'name': name,
+    }
+
+    if model_type == 'reference':
+        photo = request.files.get('photo')
+        if not photo:
+            return jsonify({'ok': False, 'error': 'No photo uploaded'})
+        ext = os.path.splitext(photo.filename)[1].lower() or '.jpg'
+        filename = f"model_{model_id}{ext}"
+        photo.save(os.path.join(MODELS_DIR, filename))
+        entry['filename'] = filename
+    else:
+        entry['skin_tone'] = request.form.get('skin_tone', '').strip()
+        entry['body_type'] = request.form.get('body_type', '').strip()
+        entry['hair'] = request.form.get('hair', '').strip()
+        entry['age_range'] = request.form.get('age_range', '').strip()
+        entry['style'] = request.form.get('style', '').strip()
+
+    models = _load_models()
+    models.insert(0, entry)
+    _save_models(models)
+    return jsonify({'ok': True, 'model': entry})
+
+
+@app.route('/studio_delete_model/<model_id>', methods=['DELETE'])
+def studio_delete_model(model_id):
+    models = _load_models()
+    to_remove = next((m for m in models if m['id'] == model_id), None)
+    if to_remove and to_remove.get('filename'):
+        photo_path = os.path.join(MODELS_DIR, to_remove['filename'])
+        if os.path.exists(photo_path):
+            os.remove(photo_path)
+    models = [m for m in models if m['id'] != model_id]
+    _save_models(models)
+    return jsonify({'ok': True})
+
+
+@app.route('/studio_model_photo/<model_id>')
+def studio_model_photo(model_id):
+    models = _load_models()
+    model = next((m for m in models if m['id'] == model_id), None)
+    if not model or not model.get('filename'):
+        return ('Not found', 404)
+    return send_from_directory(MODELS_DIR, model['filename'])
+
+
+# ── Studio Generate ────────────────────────────────────────────────────────────
+
+@app.route('/studio_generate', methods=['POST'])
+def studio_generate():
+    if google_genai is None:
+        return jsonify({'ok': False, 'error': 'google-genai not installed. Run: pip install google-genai'})
+
+    api_key = os.environ.get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        return jsonify({'ok': False, 'error': 'GEMINI_API_KEY env var not set'})
+
+    file = request.files.get('image')
+    if not file:
+        return jsonify({'ok': False, 'error': 'No image uploaded'})
+
+    bg_color = request.form.get('bg_color', 'warm cream').strip()
+    style_notes = request.form.get('style_notes', '').strip()
+    model_id = request.form.get('model_id', '').strip()
+
+    img_bytes = file.read()
+    mime_type = file.content_type or 'image/jpeg'
+
+    # Resolve selected model
+    model_entry = None
+    model_ref_bytes = None
+    model_ref_mime = 'image/jpeg'
+    if model_id:
+        models = _load_models()
+        model_entry = next((m for m in models if m['id'] == model_id), None)
+        if model_entry and model_entry.get('type') == 'reference' and model_entry.get('filename'):
+            ref_path = os.path.join(MODELS_DIR, model_entry['filename'])
+            if os.path.exists(ref_path):
+                with open(ref_path, 'rb') as fh:
+                    model_ref_bytes = fh.read()
+                ext = os.path.splitext(model_entry['filename'])[1].lower()
+                model_ref_mime = 'image/png' if ext == '.png' else 'image/jpeg'
+
+    # Build prompt
+    if model_ref_bytes:
+        # Reference photo mode — instruct Gemini to dress the person in the product
+        prompt = (
+            f"The first image is a reference photo of a model. "
+            f"The second image shows a fashion garment. "
+            f"Generate a professional fashion photograph of the exact same model from the first image "
+            f"wearing the garment from the second image. "
+            f"Match the model's face, skin tone, hair, and body exactly. "
+            f"Photograph them in a clean studio with a {bg_color} background. "
+            f"Professional studio lighting, sharp focus, editorial quality. "
+            f"Keep the garment exactly as shown — same color, pattern, texture, and style."
+        )
+    elif model_entry and model_entry.get('type') == 'preset':
+        # AI preset mode — inject model description into prompt
+        desc_parts = []
+        if model_entry.get('skin_tone'):
+            desc_parts.append(f"{model_entry['skin_tone']} skin tone")
+        if model_entry.get('body_type'):
+            desc_parts.append(f"{model_entry['body_type']} build")
+        if model_entry.get('hair'):
+            desc_parts.append(f"{model_entry['hair']} hair")
+        if model_entry.get('age_range'):
+            desc_parts.append(f"{model_entry['age_range']}")
+        model_desc = ', '.join(desc_parts) if desc_parts else 'a fashion model'
+
+        style_prefix = ''
+        model_style = model_entry.get('style', '')
+        if 'boho' in model_style.lower():
+            style_prefix = (
+                "Bohemian editorial style — natural wavy or loosely braided hair, relaxed free-spirited posture, "
+                "warm earthy atmosphere, soft organic feel. "
+            )
+
+        prompt = (
+            f"{style_prefix}"
+            f"Transform this product photo into a professional fashion photograph. "
+            f"Place the garment on a model with {model_desc}, standing in a clean studio with a {bg_color} background. "
+            f"Professional studio lighting, sharp focus, editorial quality. "
+            f"Keep the garment exactly as shown — same color, pattern, texture, and style."
+        )
+    else:
+        prompt = (
+            f"Transform this product photo into a professional fashion photograph. "
+            f"Place the garment on a model standing in a clean photo studio with a {bg_color} background. "
+            f"Professional studio lighting, sharp focus, editorial quality. "
+            f"Keep the garment exactly as shown — same color, pattern, texture, and style."
+        )
+
+    if style_notes:
+        prompt += f" {style_notes}"
+
+    try:
+        client = google_genai.Client(api_key=api_key)
+        contents = []
+        if model_ref_bytes:
+            contents.append(genai_types.Part.from_bytes(data=model_ref_bytes, mime_type=model_ref_mime))
+        contents.append(genai_types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
+        contents.append(genai_types.Part.from_text(text=prompt))
+
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-image',
+            contents=contents,
+            config=genai_types.GenerateContentConfig(
+                response_modalities=['TEXT', 'IMAGE']
+            )
+        )
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+    out_bytes = None
+    for part in response.candidates[0].content.parts:
+        if part.inline_data:
+            raw = part.inline_data.data
+            out_bytes = raw if isinstance(raw, (bytes, bytearray)) else __import__('base64').b64decode(raw)
+            break
+
+    if not out_bytes:
+        text_parts = [p.text for p in response.candidates[0].content.parts if getattr(p, 'text', None)]
+        msg = ' '.join(text_parts) if text_parts else 'Gemini returned no image'
+        return jsonify({'ok': False, 'error': msg})
+
+    out_name = f"studio_{uuid.uuid4().hex[:10]}.jpg"
+    out_path = os.path.join(STUDIO_DIR, out_name)
+    with open(out_path, 'wb') as fh:
+        fh.write(out_bytes)
+
+    return jsonify({'ok': True, 'path': out_path})
 
 
 if __name__ == "__main__":

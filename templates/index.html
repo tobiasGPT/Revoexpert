@@ -4,16 +4,50 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NEXUS // Video Editor</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=asset_version) }}">
+  {% if ga4_measurement_id %}
+  <script async src="https://www.googletagmanager.com/gtag/js?id={{ ga4_measurement_id }}"></script>
+  <script>
+    window.REVO_GA4_MEASUREMENT_ID = {{ ga4_measurement_id|tojson }};
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    window.gtag = window.gtag || gtag;
+    gtag('js', new Date());
+    gtag('config', window.REVO_GA4_MEASUREMENT_ID, { send_page_view: false });
+  </script>
+  {% endif %}
 </head>
 <body>
   <div class="grid-bg"></div>
   <div class="scanline"></div>
 
   <header>
-    <div class="logo">NEXUS</div>
+    <div class="logo-wrap">
+      <svg class="logo-mark" width="46" height="46" viewBox="0 0 46 46" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="2.5" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <!-- Corner tick marks -->
+        <line x1="1" y1="14" x2="1" y2="5" stroke="#00f0ff" stroke-width="1.5" stroke-linecap="square" opacity="0.45"/>
+        <line x1="1" y1="5" x2="10" y2="5" stroke="#00f0ff" stroke-width="1.5" stroke-linecap="square" opacity="0.45"/>
+        <line x1="45" y1="32" x2="45" y2="41" stroke="#00f0ff" stroke-width="1.5" stroke-linecap="square" opacity="0.45"/>
+        <line x1="45" y1="41" x2="36" y2="41" stroke="#00f0ff" stroke-width="1.5" stroke-linecap="square" opacity="0.45"/>
+        <!-- Octagonal frame -->
+        <polygon points="13,2 33,2 44,13 44,33 33,44 13,44 2,33 2,13"
+                 stroke="#00f0ff" stroke-width="1.5" fill="rgba(0,240,255,0.04)" filter="url(#glow)"/>
+        <!-- N letterform -->
+        <path d="M14 32 L14 14 L32 32 L32 14" stroke="#00f0ff" stroke-width="2.8"
+              fill="none" stroke-linecap="square" stroke-linejoin="miter" filter="url(#glow)"/>
+      </svg>
+      <div class="logo-text">
+        <div class="logo-name">NEXUS</div>
+        <div class="logo-sub">VIDEO EDITOR</div>
+      </div>
+    </div>
     <div class="header-meta">
-      <div class="subtitle">VIDEO EDITOR // FFMPEG INTERFACE</div>
       <button class="chip-btn" type="button" onclick="refreshWorkspace().catch(error => console.error(error))">↻ Refresh Workspace</button>
     </div>
   </header>
@@ -21,6 +55,9 @@
   <div class="tabs">
     <div class="tab active" onclick="switchTab('editor')">▶ Logo Editor</div>
     <div class="tab" onclick="switchTab('reels')">✂ YouTube → Reels</div>
+    <div class="tab" onclick="switchTab('crop')">⬚ Crop & Export</div>
+    <div class="tab" onclick="switchTab('batch')">⊞ Batch Photos</div>
+    <div class="tab" onclick="switchTab('studio')">✦ Studio</div>
   </div>
 
   <div class="status-grid" id="workspaceStatus">
@@ -278,6 +315,563 @@
     </div>
   </div>
 
-  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  <!-- ═══════════════════════════════════════════════
+       TAB 3 — CROP & EXPORT
+  ════════════════════════════════════════════════ -->
+  <div id="tab-crop" class="tab-content">
+    <div class="layout">
+      <div class="col">
+        <div class="card">
+          <div class="card-title">Image File</div>
+          <div id="cropDropZone" class="crop-drop-zone"
+               ondragover="cropDragOver(event)"
+               ondragleave="cropDragLeave(event)"
+               ondrop="cropDrop(event)"
+               onclick="document.getElementById('cropFileInput').click()">
+            <div class="crop-drop-icon">⬚</div>
+            <div id="cropDropPrimary" class="crop-drop-primary">DROP IMAGE HERE</div>
+            <div id="cropDropSecondary" class="crop-drop-secondary">Drag a file into this box or use the button below.</div>
+            <button class="chip-btn crop-drop-button" type="button" onclick="event.stopPropagation(); document.getElementById('cropFileInput').click()">Choose Image</button>
+            <input type="file" id="cropFileInput" accept="image/*" style="display:none" onchange="cropFileSelected(this.files[0])">
+          </div>
+          <div id="cropMeta" style="margin-top:0.75rem;font-size:0.72rem;color:var(--text-dim);"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Aspect Ratio</div>
+          <div class="position-grid" style="grid-template-columns:repeat(4,1fr);">
+            <button class="pos-btn active" id="ratioFree" onclick="setRatio(0,0,this)">Free</button>
+            <button class="pos-btn" onclick="setRatio(1,1,this)">1:1</button>
+            <button class="pos-btn" onclick="setRatio(4,5,this)">4:5</button>
+            <button class="pos-btn" onclick="setRatio(3,4,this)">3:4</button>
+            <button class="pos-btn" onclick="setRatio(9,16,this)">9:16</button>
+            <button class="pos-btn" onclick="setRatio(16,9,this)">16:9</button>
+            <button class="pos-btn" onclick="setRatio(2,3,this)">2:3</button>
+            <button class="pos-btn" onclick="setRatio(1,2,this)">1:2</button>
+          </div>
+          <label style="margin-top:1rem;">Crop Region (pixels)</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-top:0.5rem;">
+            <div><label style="margin:0;">X</label><input type="number" id="cropX" value="0" min="0" oninput="syncCropFromInputs()"></div>
+            <div><label style="margin:0;">Y</label><input type="number" id="cropY" value="0" min="0" oninput="syncCropFromInputs()"></div>
+            <div><label style="margin:0;">Width</label><input type="number" id="cropW" value="0" min="1" oninput="syncCropFromInputs()"></div>
+            <div><label style="margin:0;">Height</label><input type="number" id="cropH" value="0" min="1" oninput="syncCropFromInputs()"></div>
+          </div>
+          <label style="margin-top:1rem;">Output Quality — <span id="cropQualVal">97</span>%</label>
+          <input type="range" id="cropQual" min="60" max="100" value="97" step="1" oninput="document.getElementById('cropQualVal').textContent=this.value">
+          <button class="btn success-btn" id="cropBtn" onclick="runCrop()" style="margin-top:1rem;">⬚ EXPORT CROP</button>
+          <div id="cropOutputPath"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Compress & Convert</div>
+          <label>Output Format</label>
+          <select id="compressFormat">
+            <option value="jpeg">JPEG</option>
+            <option value="webp">WebP</option>
+            <option value="png">PNG (lossless)</option>
+          </select>
+          <label style="margin-top:0.75rem;">Quality — <span id="compressQualVal">90</span>%</label>
+          <input type="range" id="compressQual" min="40" max="100" value="90" step="1" oninput="document.getElementById('compressQualVal').textContent=this.value">
+          <div id="compressSizeNote" style="font-size:0.72rem;color:var(--text-dim);margin-top:0.5rem;min-height:1rem;"></div>
+          <button class="btn" id="compressBtn" onclick="runCompress()" style="margin-top:0.75rem;">◈ COMPRESS IMAGE</button>
+          <div id="compressOutputPath"></div>
+        </div>
+      </div>
+      <div class="col" style="flex:2;">
+        <div class="card">
+          <div class="card-title">Canvas — drag to select crop area</div>
+          <div style="position:relative;overflow:hidden;background:#050508;border-radius:4px;border:1px solid rgba(0,240,255,0.08);min-height:200px;display:flex;align-items:center;justify-content:center;">
+            <canvas id="cropCanvas" style="display:block;max-width:100%;cursor:crosshair;"></canvas>
+            <span id="cropCanvasPlaceholder" style="color:var(--text-dim);font-size:0.75rem;letter-spacing:0.1em;">LOAD AN IMAGE TO BEGIN</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Cropped Preview</div>
+          <div class="preview-box" id="cropPreviewBox"><span class="preview-placeholder">CROP WILL APPEAR HERE</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       TAB 4 — BATCH PHOTOS
+  ════════════════════════════════════════════════ -->
+  <div id="tab-batch" class="tab-content">
+    <div class="layout" style="grid-template-columns: 1fr 1.6fr;">
+      <div class="col">
+
+        <div class="card">
+          <div class="card-title-row">
+            <div class="card-title">Drop Photos</div>
+            <button class="chip-btn small" type="button" onclick="batchClearQueue()">✕ Clear</button>
+          </div>
+          <div id="batchDropZone" class="crop-drop-zone"
+               ondragover="batchDragOver(event)"
+               ondragleave="batchDragLeave(event)"
+               ondrop="batchDrop(event)"
+               onclick="document.getElementById('batchFileInput').click()">
+            <div class="crop-drop-icon">⊞</div>
+            <div class="crop-drop-primary">DROP IMAGES HERE</div>
+            <div class="crop-drop-secondary">Drop multiple photos at once — JPEG, PNG, WebP supported.</div>
+            <button class="chip-btn crop-drop-button" type="button" onclick="event.stopPropagation(); document.getElementById('batchFileInput').click()">Choose Files</button>
+            <input type="file" id="batchFileInput" accept="image/*" multiple style="display:none" onchange="batchFilesSelected(this.files)">
+          </div>
+          <div id="batchQueue" style="margin-top:1rem;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">⬚ Batch Crop</div>
+
+          <label>Crop Mode</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem;">
+            <button class="pos-btn active" id="batchModeCenterRatio" onclick="setBatchMode('center_ratio', this)">Center Ratio</button>
+            <button class="pos-btn" id="batchModeManual" onclick="setBatchMode('manual', this)">Manual Coords</button>
+          </div>
+
+          <div id="batchCenterRatioSettings">
+            <label>Aspect Ratio</label>
+            <div class="position-grid" style="grid-template-columns:repeat(4,1fr);">
+              <button class="pos-btn active" id="batchRatio_1_1" onclick="setBatchRatio(1,1,this)">1:1</button>
+              <button class="pos-btn" id="batchRatio_4_5" onclick="setBatchRatio(4,5,this)">4:5</button>
+              <button class="pos-btn" id="batchRatio_3_4" onclick="setBatchRatio(3,4,this)">3:4</button>
+              <button class="pos-btn" id="batchRatio_2_3" onclick="setBatchRatio(2,3,this)">2:3</button>
+              <button class="pos-btn" id="batchRatio_9_16" onclick="setBatchRatio(9,16,this)">9:16</button>
+              <button class="pos-btn" id="batchRatio_16_9" onclick="setBatchRatio(16,9,this)">16:9</button>
+              <button class="pos-btn" id="batchRatio_4_3" onclick="setBatchRatio(4,3,this)">4:3</button>
+              <button class="pos-btn" id="batchRatio_1_2" onclick="setBatchRatio(1,2,this)">1:2</button>
+            </div>
+          </div>
+
+          <div id="batchManualSettings" style="display:none;">
+            <div class="toggle-row" style="margin-top:0.75rem;">
+              <label class="toggle"><input type="checkbox" id="batchProportional" checked><span class="slider-toggle"></span></label>
+              <span class="toggle-label">Proportional (scale coords per image)</span>
+            </div>
+            <label style="margin-top:1rem;">Crop Region (from first image)</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-top:0.5rem;">
+              <div><label style="margin:0;">X</label><input type="number" id="batchX" value="0" min="0"></div>
+              <div><label style="margin:0;">Y</label><input type="number" id="batchY" value="0" min="0"></div>
+              <div><label style="margin:0;">W</label><input type="number" id="batchW" value="0" min="1"></div>
+              <div><label style="margin:0;">H</label><input type="number" id="batchH" value="0" min="1"></div>
+            </div>
+            <div id="batchRefDims" style="font-size:0.7rem;color:var(--text-dim);margin-top:0.5rem;"></div>
+          </div>
+
+          <label style="margin-top:1rem;">Output Quality — <span id="batchCropQualVal">97</span>%</label>
+          <input type="range" id="batchCropQual" min="60" max="100" value="97" step="1" oninput="document.getElementById('batchCropQualVal').textContent=this.value">
+          <button class="btn" id="batchRunCropBtn" onclick="runBatch('crop')">⬚ RUN BATCH CROP</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">◈ Batch Compress</div>
+
+          <label>Output Format</label>
+          <select id="batchCompressFormat">
+            <option value="jpeg">JPEG</option>
+            <option value="webp">WebP</option>
+            <option value="png">PNG (lossless)</option>
+          </select>
+          <label style="margin-top:0.75rem;">Quality — <span id="batchCompressQualVal">90</span>%</label>
+          <input type="range" id="batchCompressQual" min="40" max="100" value="90" step="1" oninput="document.getElementById('batchCompressQualVal').textContent=this.value">
+          <button class="btn success-btn" id="batchRunCompressBtn" onclick="runBatch('compress')">◈ RUN BATCH COMPRESS</button>
+          <div id="batchDestNote" style="font-size:0.72rem;color:var(--text-dim);margin-top:0.75rem;">Output: <span style="color:var(--accent);">~/Desktop/Nexus Exports</span></div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="card">
+          <div class="card-title">Progress</div>
+          <div class="progress-bar"><div class="progress-fill" id="batchProgress" style="width:0%"></div></div>
+          <div class="log-box" id="batchLog" style="height:320px;"><div class="log-line dim">// Add images and hit Run Batch</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Results</div>
+          <div id="batchResults"><div class="preview-placeholder padded">Results will appear here</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       TAB 5 — STUDIO (Gemini image generation)
+  ════════════════════════════════════════════════ -->
+  <div id="tab-studio" class="tab-content">
+    <div class="layout studio-layout">
+      <div class="col studio-sidebar">
+        <div class="card studio-card">
+          <div class="card-title-row">
+            <div class="card-title">Product Photo</div>
+            <span class="status-pill warn" id="studioSourceStatus">Awaiting File</span>
+          </div>
+          <div id="studioDropZone" class="crop-drop-zone studio-drop-zone"
+               ondragenter="studioDragOver(event)"
+               ondragover="studioDragOver(event)"
+               ondragleave="studioDragLeave(event)"
+               ondrop="studioDrop(event)"
+               onclick="studioOpenFilePicker(event)"
+               onkeydown="studioOpenFilePicker(event)"
+               tabindex="0"
+               role="button">
+            <div class="crop-drop-icon">✦</div>
+            <div id="studioDropPrimary" class="crop-drop-primary">DROP PHOTO HERE</div>
+            <div id="studioDropSecondary" class="crop-drop-secondary">Snap a product photo on your phone, then drop it here. A simple hanger or mannequin shot is enough.</div>
+            <label class="chip-btn crop-drop-button" for="studioFileInput">Choose Photo</label>
+            <input type="file" id="studioFileInput" class="sr-file-input" accept="image/*,.heic,.heif,.avif" onclick="this.value=''" onchange="studioHandleFileInputChange(this)">
+            <div class="studio-picker-fallback">
+              <label for="studioFileInputVisible">If Safari is stubborn, use the native picker here:</label>
+              <input type="file" id="studioFileInputVisible" accept="image/*,.heic,.heif,.avif" onclick="this.value=''" onchange="studioHandleFileInputChange(this)">
+            </div>
+          </div>
+          <div id="studioSourceMeta" class="studio-helper">Reference not loaded yet. Once a file is selected, we will build a reusable studio brief around it.</div>
+          <div class="studio-toolbar studio-source-actions">
+            <button class="chip-btn small" type="button" id="studioRotateLeftBtn" style="display:none" onclick="studioRotateSource(-90)">Rotate Left</button>
+            <button class="chip-btn small" type="button" id="studioRotateRightBtn" style="display:none" onclick="studioRotateSource(90)">Rotate Right</button>
+            <button class="chip-btn small" type="button" id="studioResetOrientationBtn" style="display:none" onclick="studioResetOrientation()">Reset Orientation</button>
+            <button class="chip-btn small" type="button" id="studioCropSquareBtn" style="display:none" onclick="studioCropSource('1:1')">Crop 1:1</button>
+            <button class="chip-btn small" type="button" id="studioCropPortraitBtn" style="display:none" onclick="studioCropSource('4:5')">Crop 4:5</button>
+            <button class="chip-btn small" type="button" id="studioCropVerticalBtn" style="display:none" onclick="studioCropSource('9:16')">Crop 9:16</button>
+            <button class="chip-btn small" type="button" id="studioResetCropBtn" style="display:none" onclick="studioResetSourceCrop()">Reset Crop</button>
+            <button class="chip-btn small" type="button" id="studioClearSourceBtn" style="display:none" onclick="studioClearSource()">Remove Photo</button>
+          </div>
+          <div id="studioSourcePreview" class="studio-source-preview" style="display:none;">
+            <img id="studioSourceImg" class="studio-source-img" alt="source">
+          </div>
+          <div id="studioSourceDiagnostics" class="studio-source-diagnostics">
+            <div class="studio-summary-label">Source Readiness</div>
+            <div id="studioSourceBadges" class="studio-chip-row">
+              <span class="studio-chip">Waiting for source</span>
+            </div>
+            <div id="studioSourceSuggestion" class="studio-source-suggestion" style="display:none;">
+              <div id="studioSourceSuggestionText" class="studio-source-suggestion-copy"></div>
+              <button class="chip-btn small" type="button" id="studioSourceSuggestionBtn" onclick="studioApplySuggestedRatio()">Use Suggested Ratio</button>
+            </div>
+            <div id="studioSourceWarnings" class="studio-source-warnings">
+              <div class="empty-state">Upload a product photo to see image-readiness guidance for the generator.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card studio-card">
+          <div class="card-title">Shoot Direction</div>
+
+          <label>Background</label>
+          <div id="studioBgSwatches" class="studio-swatch-grid">
+            <button class="studio-swatch active" type="button" data-bg="warm white" style="background:#F5F0EA;" onclick="studioSelectBg(this)"><span>Warm White</span></button>
+            <button class="studio-swatch" type="button" data-bg="cream" style="background:#EDE0CC;" onclick="studioSelectBg(this)"><span>Cream</span></button>
+            <button class="studio-swatch" type="button" data-bg="sand" style="background:#C8B89A;" onclick="studioSelectBg(this)"><span>Sand</span></button>
+            <button class="studio-swatch" type="button" data-bg="warm grey" style="background:#BEBAB5;" onclick="studioSelectBg(this)"><span>Warm Grey</span></button>
+            <button class="studio-swatch" type="button" data-bg="taupe" style="background:#9C9080;" onclick="studioSelectBg(this)"><span>Taupe</span></button>
+            <button class="studio-swatch" type="button" data-bg="blush" style="background:#D4B8B0;" onclick="studioSelectBg(this)"><span>Blush</span></button>
+            <button class="studio-swatch" type="button" data-bg="sage" style="background:#B4C0B0;" onclick="studioSelectBg(this)"><span>Sage</span></button>
+            <button class="studio-swatch" type="button" data-bg="stone" style="background:#8C8880;" onclick="studioSelectBg(this)"><span>Stone</span></button>
+          </div>
+
+          <label>Framing</label>
+          <div class="studio-choice-grid" id="studioFrameChoices">
+            <button class="studio-choice" type="button" data-group="frame" data-value="full length" onclick="studioSelectOption('frame', 'full length', this)">
+              <strong>Full Length</strong>
+              <span>Head-to-toe silhouette for catalogue clarity.</span>
+            </button>
+            <button class="studio-choice active" type="button" data-group="frame" data-value="three-quarter crop" onclick="studioSelectOption('frame', 'three-quarter crop', this)">
+              <strong>Three-Quarter</strong>
+              <span>Balanced commerce and editorial framing.</span>
+            </button>
+            <button class="studio-choice" type="button" data-group="frame" data-value="waist-up focus" onclick="studioSelectOption('frame', 'waist-up focus', this)">
+              <strong>Waist Up</strong>
+              <span>Closer crop for texture and styling details.</span>
+            </button>
+          </div>
+
+          <label>Energy</label>
+          <div class="studio-choice-grid" id="studioEnergyChoices">
+            <button class="studio-choice active" type="button" data-group="energy" data-value="still editorial" onclick="studioSelectOption('energy', 'still editorial', this)">
+              <strong>Still Editorial</strong>
+              <span>Quiet luxury posture with a calm expression.</span>
+            </button>
+            <button class="studio-choice" type="button" data-group="energy" data-value="soft movement" onclick="studioSelectOption('energy', 'soft movement', this)">
+              <strong>Soft Movement</strong>
+              <span>Light motion in the pose without losing product read.</span>
+            </button>
+            <button class="studio-choice" type="button" data-group="energy" data-value="campaign confidence" onclick="studioSelectOption('energy', 'campaign confidence', this)">
+              <strong>Campaign</strong>
+              <span>Sharper fashion attitude for ad creative.</span>
+            </button>
+          </div>
+
+          <label>Use Case</label>
+          <div class="studio-choice-grid studio-choice-grid-tight" id="studioUseCaseChoices">
+            <button class="studio-choice active" type="button" data-group="use_case" data-value="pdp hero image" onclick="studioSelectOption('use_case', 'pdp hero image', this)">
+              <strong>PDP Hero</strong>
+              <span>Clean, conversion-focused primary image.</span>
+            </button>
+            <button class="studio-choice" type="button" data-group="use_case" data-value="lookbook story" onclick="studioSelectOption('use_case', 'lookbook story', this)">
+              <strong>Lookbook</strong>
+              <span>Feels branded and a touch more expressive.</span>
+            </button>
+            <button class="studio-choice" type="button" data-group="use_case" data-value="paid social creative" onclick="studioSelectOption('use_case', 'paid social creative', this)">
+              <strong>Paid Social</strong>
+              <span>Stronger visual hook for fast-scroll placements.</span>
+            </button>
+          </div>
+
+          <label>Output Ratio</label>
+          <div class="studio-choice-grid studio-ratio-grid" id="studioRatioChoices">
+            <button class="studio-choice compact active" type="button" data-group="aspect_ratio" data-value="original proportion" onclick="studioSelectOption('aspect_ratio', 'original proportion', this)">
+              <strong>Original</strong>
+              <span>Keep the composition natural.</span>
+            </button>
+            <button class="studio-choice compact" type="button" data-group="aspect_ratio" data-value="1:1 square" onclick="studioSelectOption('aspect_ratio', '1:1 square', this)">
+              <strong>1:1</strong>
+              <span>Marketplace and grid-friendly crop.</span>
+            </button>
+            <button class="studio-choice compact" type="button" data-group="aspect_ratio" data-value="4:5 portrait" onclick="studioSelectOption('aspect_ratio', '4:5 portrait', this)">
+              <strong>4:5</strong>
+              <span>Great default for PDP and feed.</span>
+            </button>
+            <button class="studio-choice compact" type="button" data-group="aspect_ratio" data-value="9:16 vertical" onclick="studioSelectOption('aspect_ratio', '9:16 vertical', this)">
+              <strong>9:16</strong>
+              <span>Built for stories and reels covers.</span>
+            </button>
+          </div>
+
+          <label>Style Notes (optional)</label>
+          <textarea id="studioStyleNotes" rows="4" placeholder="e.g. model facing camera, slight step forward, hands relaxed, keep the dress hem visible..." oninput="studioRefreshBrief()"></textarea>
+          <div class="studio-helper">These controls compile into the existing backend `style_notes` input, so prompt quality improves without changing Claude's API contract.</div>
+        </div>
+
+        <!-- Models card -->
+        <div class="card studio-card" id="studioModelsCard">
+          <div class="card-title-row">
+            <div class="card-title">Models</div>
+            <div class="studio-toolbar">
+              <button class="chip-btn small" type="button" onclick="studioOpenAddModel('reference')">+ Reference Photo</button>
+              <button class="chip-btn small" type="button" onclick="studioOpenAddModel('preset')">+ AI Preset</button>
+            </div>
+          </div>
+
+          <!-- Model grid -->
+          <div id="studioModelGrid" class="studio-model-grid">
+            <div class="empty-state">No models saved yet. Add a reference photo or build an AI preset.</div>
+          </div>
+
+          <!-- Add Reference Photo form -->
+          <div id="studioAddReferenceForm" class="studio-model-form" style="display:none;">
+            <div class="studio-model-form-title">Add Reference Photo</div>
+            <label>Name</label>
+            <input type="text" id="studioRefName" placeholder="e.g. Sara, Lina...">
+            <label>Photo</label>
+            <div id="studioRefDropZone" class="crop-drop-zone studio-model-drop"
+                 onclick="document.getElementById('studioRefFileInput').click()">
+              <div class="crop-drop-icon">✦</div>
+              <div class="crop-drop-primary">DROP PHOTO</div>
+              <div class="crop-drop-secondary">Full-body shot works best.</div>
+            </div>
+            <input type="file" id="studioRefFileInput" accept="image/*,.heic,.heif" onchange="studioRefPhotoSelected(this)">
+            <img id="studioRefThumb" class="studio-model-ref-thumb" style="display:none;">
+            <div class="studio-model-form-actions">
+              <button class="btn" type="button" onclick="studioSaveReferenceModel()" style="margin-top:0.5rem;">Save Model</button>
+              <button class="chip-btn small" type="button" onclick="studioCloseAddModel()">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Add AI Preset form -->
+          <div id="studioAddPresetForm" class="studio-model-form" style="display:none;">
+            <div class="studio-model-form-title">Build AI Preset</div>
+            <label>Name</label>
+            <input type="text" id="studioPresetName" placeholder="e.g. Boho Dark, Editorial Fair...">
+            <label>Style</label>
+            <div class="studio-choice-grid" id="studioPresetStyleChoices">
+              <button class="studio-choice active" type="button" data-value="boho" onclick="studioPresetPickStyle('boho', this)">
+                <strong>Boho / Free Spirit</strong>
+                <span>Earthy, natural, relaxed — wavy hair, warm tones.</span>
+              </button>
+              <button class="studio-choice" type="button" data-value="editorial" onclick="studioPresetPickStyle('editorial', this)">
+                <strong>Editorial Clean</strong>
+                <span>Sharp, minimal, high-fashion posture.</span>
+              </button>
+              <button class="studio-choice" type="button" data-value="commercial" onclick="studioPresetPickStyle('commercial', this)">
+                <strong>Commercial Bright</strong>
+                <span>Approachable, aspirational, lifestyle energy.</span>
+              </button>
+            </div>
+            <label>Skin Tone</label>
+            <select id="studioPresetSkinTone">
+              <option value="fair porcelain">Fair / Porcelain</option>
+              <option value="light warm ivory">Light Warm / Ivory</option>
+              <option value="medium olive" selected>Medium / Olive</option>
+              <option value="medium-dark warm brown">Medium-Dark / Warm Brown</option>
+              <option value="dark rich brown">Dark / Rich Brown</option>
+              <option value="deep ebony">Deep / Ebony</option>
+            </select>
+            <label>Body Type</label>
+            <select id="studioPresetBodyType">
+              <option value="slim and tall">Slim &amp; Tall</option>
+              <option value="slim" selected>Slim</option>
+              <option value="athletic toned">Athletic / Toned</option>
+              <option value="petite">Petite</option>
+              <option value="curvy hourglass">Curvy / Hourglass</option>
+              <option value="plus size">Plus Size</option>
+            </select>
+            <label>Hair</label>
+            <select id="studioPresetHair">
+              <option value="long dark wavy" selected>Long Dark Wavy</option>
+              <option value="long blonde wavy">Long Blonde Wavy</option>
+              <option value="long loose braids">Long Loose Braids</option>
+              <option value="short dark bob">Short Dark Bob</option>
+              <option value="short blonde pixie">Short Blonde Pixie</option>
+              <option value="natural curls afro">Natural Curls / Afro</option>
+              <option value="long black straight">Long Black Straight</option>
+            </select>
+            <label>Age Range</label>
+            <select id="studioPresetAge">
+              <option value="early 20s">Early 20s</option>
+              <option value="mid-20s" selected>Mid-20s</option>
+              <option value="late 20s to early 30s">Late 20s – Early 30s</option>
+              <option value="mid-30s">Mid-30s</option>
+            </select>
+            <div class="studio-model-form-actions">
+              <button class="btn" type="button" onclick="studioSavePresetModel()" style="margin-top:0.5rem;">Save Preset</button>
+              <button class="chip-btn small" type="button" onclick="studioCloseAddModel()">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card studio-card">
+          <div class="card-title-row">
+            <div class="card-title">Prompt Preview</div>
+            <div class="studio-toolbar">
+              <button class="chip-btn small" type="button" onclick="studioCopyBrief()">Copy Brief</button>
+              <button class="chip-btn small" type="button" onclick="studioResetDirection()">Reset Brief</button>
+            </div>
+          </div>
+          <div id="studioPromptPreview" class="studio-prompt-box">Upload a source photo to generate a live studio brief.</div>
+          <div class="studio-batch-controls">
+            <div class="studio-summary-label">Variant Run Size</div>
+            <div id="studioVariantChoices" class="studio-variant-toggle">
+              <button class="studio-mini-toggle active" type="button" data-variants="1" onclick="studioSetVariantCount(1, this)">1x</button>
+              <button class="studio-mini-toggle" type="button" data-variants="2" onclick="studioSetVariantCount(2, this)">2x</button>
+              <button class="studio-mini-toggle" type="button" data-variants="4" onclick="studioSetVariantCount(4, this)">4x</button>
+            </div>
+            <div id="studioRunSummary" class="studio-helper">Generate one refined take from this brief. Use `Cmd/Ctrl + Enter` for a fast rerun.</div>
+          </div>
+          <div class="studio-action-row">
+            <button class="btn" id="studioGenBtn" onclick="studioGenerate()" disabled>✦ GENERATE STUDIO SHOT</button>
+            <button class="chip-btn danger-chip" id="studioStopBtn" type="button" style="display:none;" onclick="studioStopRun()">Stop Run</button>
+          </div>
+          <div id="studioRunNote" class="studio-helper">Best results usually come from a clean product reference, a restrained background, and one clear styling note.</div>
+          <div class="progress-bar"><div class="progress-fill" id="studioProgress" style="width:0%"></div></div>
+        </div>
+
+        <div class="card studio-card">
+          <div class="card-title-row">
+            <div class="card-title">Saved Looks</div>
+            <button class="chip-btn small" type="button" onclick="studioSavePreset()">Save Current</button>
+          </div>
+          <div id="studioPresetList" class="studio-preset-list">
+            <div class="empty-state">Save repeatable brand looks here for one-click reuse.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col studio-main">
+        <div class="card studio-card studio-result-card">
+          <div class="card-title-row">
+            <div class="card-title">Result Deck</div>
+            <div class="studio-result-actions">
+              <span class="status-pill warn" id="studioResultStatus">Idle</span>
+              <button class="chip-btn small" id="studioFavoriteBtn" style="display:none;" onclick="studioToggleCurrentFavorite()">☆ Favorite</button>
+              <button class="chip-btn small" id="studioShortlistBtn" style="display:none;" onclick="studioToggleCurrentReviewStatus('shortlisted')">□ Shortlist</button>
+              <button class="chip-btn small" id="studioApproveBtn" style="display:none;" onclick="studioToggleCurrentReviewStatus('approved')">□ Approve</button>
+              <button class="chip-btn small" id="studioDownloadBtn" style="display:none;" onclick="studioDownload()">↓ Save</button>
+            </div>
+          </div>
+
+          <div class="studio-summary">
+            <div class="studio-summary-label">Current Brief</div>
+            <div id="studioSummaryChips" class="studio-chip-row">
+              <span class="studio-chip">Background: Warm White</span>
+              <span class="studio-chip">Framing: Three-Quarter</span>
+              <span class="studio-chip">Energy: Still Editorial</span>
+              <span class="studio-chip">Use: PDP Hero</span>
+            </div>
+          </div>
+
+          <div class="studio-compare">
+            <div class="studio-pane">
+              <div class="studio-pane-label">Reference</div>
+              <div id="studioReferenceBox" class="studio-image-frame">
+                <span class="preview-placeholder">REFERENCE APPEARS HERE</span>
+              </div>
+            </div>
+            <div class="studio-pane">
+              <div class="studio-pane-label">Generated</div>
+              <div id="studioResultBox" class="studio-image-frame studio-image-frame-large">
+                <span class="preview-placeholder">RESULT WILL APPEAR HERE</span>
+              </div>
+              <div class="studio-compare-controls">
+                <div class="studio-compare-mode">
+                  <div class="studio-summary-label">Compare View</div>
+                  <div id="studioCompareModes" class="studio-variant-toggle">
+                    <button class="studio-mini-toggle active" type="button" data-mode="slider" onclick="studioSetCompareMode('slider', this)">Reveal</button>
+                    <button class="studio-mini-toggle" type="button" data-mode="focus" onclick="studioSetCompareMode('focus', this)">Generated</button>
+                  </div>
+                </div>
+                <div class="studio-compare-scale">
+                  <span>Reference Reveal</span>
+                  <span id="studioCompareValue">50%</span>
+                </div>
+                <input type="range" id="studioCompareSlider" min="0" max="100" value="50" oninput="studioSetCompareSplit(this.value)" disabled>
+              </div>
+              <div class="studio-variant-strip-head">
+                <div class="studio-pane-label">Current Run Variants</div>
+                <div id="studioVariantSummary" class="studio-variant-summary">Generate a shot to build the latest run strip.</div>
+              </div>
+              <div id="studioVariantFilmstrip" class="studio-variant-filmstrip">
+                <div class="empty-state">Run one or more variants and they will appear here for quick compare switching.</div>
+              </div>
+              <div class="studio-note-panel">
+                <div class="card-title-row">
+                  <div class="card-title">Shot Notes</div>
+                  <div class="studio-toolbar">
+                    <button class="chip-btn small" type="button" id="studioSaveNoteBtn" onclick="studioSaveCurrentShotNote()" disabled>Save Note</button>
+                    <button class="chip-btn small" type="button" id="studioClearNoteBtn" onclick="studioClearCurrentShotNote()" disabled>Clear Note</button>
+                  </div>
+                </div>
+                <textarea id="studioShotNote" rows="3" placeholder="Add quick review context for this shot..." oninput="studioSyncShotNoteActions()" disabled></textarea>
+                <div id="studioShotNoteMeta" class="studio-helper">Select or generate a shot to attach notes like \"best for PDP\", \"needs cleaner hem\", or \"strong ad candidate\".</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card studio-card">
+          <div class="card-title-row">
+            <div class="card-title">Run Log</div>
+            <button class="chip-btn small" type="button" onclick="studioClearLog()">Clear Log</button>
+          </div>
+          <div class="log-box" id="studioLog"><div class="log-line dim">// Drop a product photo and hit Generate</div></div>
+        </div>
+
+        <div class="card studio-card">
+          <div class="card-title-row">
+            <div class="card-title">Recent Studio Shots</div>
+            <div class="studio-toolbar">
+              <div id="studioHistoryFilters" class="studio-variant-toggle">
+                <button class="studio-mini-toggle active" type="button" data-filter="all" onclick="studioSetHistoryFilter('all', this)">All</button>
+                <button class="studio-mini-toggle" type="button" data-filter="favorites" onclick="studioSetHistoryFilter('favorites', this)">Favorites</button>
+                <button class="studio-mini-toggle" type="button" data-filter="shortlisted" onclick="studioSetHistoryFilter('shortlisted', this)">Shortlisted</button>
+                <button class="studio-mini-toggle" type="button" data-filter="approved" onclick="studioSetHistoryFilter('approved', this)">Approved</button>
+              </div>
+              <button class="chip-btn small" type="button" onclick="studioClearHistory()">Clear History</button>
+            </div>
+          </div>
+          <div id="studioHistoryList" class="studio-history-list">
+            <div class="empty-state">Generated studio shots will collect here for quick reopening.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js', v=asset_version) }}" defer></script>
 </body>
 </html>
